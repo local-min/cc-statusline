@@ -32,24 +32,46 @@ PR #324                                        ← 関連PR番号
 
 ## 前提条件
 
-- **jq**: JSON パーサー（`brew install jq`）
-- **gh**: GitHub CLI（`brew install gh`）— PR 番号の表示に必要。なくても動作する
-- **git**: ブランチ・差分情報の表示に必要
+> **対応 OS: macOS**
+> このスクリプトは `date -r` / `stat -f` / `md5 -q` など BSD 系コマンドに依存しています。Linux では一部の行（リセット時刻・PR キャッシュなど）が正しく動作しません。
+
+| ツール | 用途 | インストール |
+|---|---|---|
+| **jq** | JSON のパース（**必須**） | `brew install jq` |
+| **git** | ブランチ・差分の表示（**必須**） | macOS 標準。なければ `brew install git` |
+| **gh** | PR 番号の表示（任意。なくても動作） | `brew install gh` → `gh auth login` |
 
 ## セットアップ
 
-### 1. スクリプトを配置
+新規ユーザーが clone から表示確認までを行う手順です。上から順に実行してください。
 
-`statusline.sh` を `~/.claude/` にコピーして実行権限を付与します。
+### 1. 前提ツールをインストール
+
+まだの場合のみ。すでに入っていればスキップして構いません。
+
+```bash
+brew install jq gh   # gh は任意（PR 番号表示用）
+```
+
+### 2. リポジトリを clone
+
+```bash
+git clone https://github.com/local-min/cc-statusline.git
+cd cc-statusline
+```
+
+### 3. スクリプトを配置
+
+clone したディレクトリ内で、`statusline.sh` を `~/.claude/` にコピーして実行権限を付与します。
 
 ```bash
 cp statusline.sh ~/.claude/statusline.sh
 chmod +x ~/.claude/statusline.sh
 ```
 
-### 2. settings.json に追加
+### 4. settings.json に追加
 
-`~/.claude/settings.json` に以下を追加します（既存の設定に追記）。
+`~/.claude/settings.json` に以下を追加します（既存の設定がある場合は `statusLine` キーを追記）。
 
 ```json
 {
@@ -63,7 +85,17 @@ chmod +x ~/.claude/statusline.sh
 
 `padding` はステータスラインの上下余白（行数）です。お好みで `0`〜`2` を指定してください。
 
-### 3. Claude Code を再起動
+### 5. 動作確認（任意）
+
+Claude Code を再起動する前に、モック JSON でスクリプト単体の動作を確認できます。
+
+```bash
+echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_window":{"used_percentage":42},"exceeds_200k_tokens":false,"rate_limits":{"five_hour":{"used_percentage":15,"resets_at":1743850800},"seven_day":{"used_percentage":30,"resets_at":1744412400}}}' | ~/.claude/statusline.sh
+```
+
+4 行目に `💰 5h 15% (🔄 20:00) │ 7d 30% (🔄 4/12 08:00)` のような表示が出れば成功です（時刻はローカルタイムゾーンに依存）。
+
+### 6. Claude Code を再起動
 
 次回の Claude Code 起動時から自動的にステータスラインが表示されます。
 
@@ -94,19 +126,12 @@ Line 5 の `300`（秒）を変更します。`gh pr view` は通信が発生す
 
 | 症状 | 対処 |
 |---|---|
+| `jq: command not found` / 表示が崩れる | `brew install jq` で jq をインストール |
 | ステータスラインが表示されない | `chmod +x ~/.claude/statusline.sh` を確認。`settings.json` の `statusLine` 設定を確認 |
 | 「statusline skipped」と表示される | ワークスペース信頼ダイアログを承認する |
 | レートリミットが表示されない | API キーユーザーには表示されません（Max/Pro プランのみ） |
 | PR 番号が表示されない | `gh auth login` でログイン済みか確認。対象ブランチに PR がない場合も非表示 |
-| 時刻が `午前/午後` で表示される | スクリプト内で `LC_ALL=C` を設定済みのため通常は発生しません。発生する場合はシェルのロケールを確認 |
-
-## 動作テスト
-
-モック JSON を使ってスクリプト単体でテストできます。
-
-```bash
-echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_window":{"used_percentage":42},"exceeds_200k_tokens":false,"rate_limits":{"five_hour":{"used_percentage":15,"resets_at":1743850800},"seven_day":{"used_percentage":30,"resets_at":1744412400}}}' | ~/.claude/statusline.sh
-```
+| リセット時刻がずれて見える | ローカルタイムゾーンで表示されます。`date` の出力（`date '+%H:%M'`）と合っているか確認 |
 
 ## ライセンス
 
