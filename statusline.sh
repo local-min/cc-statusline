@@ -67,7 +67,7 @@ if [ -n "$FIVE_PCT" ]; then
 
   FIVE_TIME=""
   if [ -n "$FIVE_RESET" ]; then
-    FIVE_TIME=$(LC_ALL=C date -r "$FIVE_RESET" '+%l%p' 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+    FIVE_TIME=$(date -r "$FIVE_RESET" '+%H:%M' 2>/dev/null)
     [ -n "$FIVE_TIME" ] && FIVE_TIME=" (🔄 ${FIVE_TIME})"
   fi
 
@@ -81,7 +81,7 @@ if [ -n "$FIVE_PCT" ]; then
 
     SEVEN_TIME=""
     if [ -n "$SEVEN_RESET" ]; then
-      SEVEN_TIME=$(LC_ALL=C date -r "$SEVEN_RESET" '+%-m/%-d %l%p' 2>/dev/null | tr '[:upper:]' '[:lower:]' | sed 's/  */ /g; s/^ *//')
+      SEVEN_TIME=$(date -r "$SEVEN_RESET" '+%-m/%-d %H:%M' 2>/dev/null)
       [ -n "$SEVEN_TIME" ] && SEVEN_TIME=" (🔄 ${SEVEN_TIME})"
     fi
 
