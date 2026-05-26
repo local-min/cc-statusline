@@ -32,8 +32,8 @@ PR #324                                        ← 関連PR番号
 
 ## 前提条件
 
-> **対応 OS: macOS**
-> このスクリプトは `date -r` / `stat -f` / `md5 -q` など BSD 系コマンドに依存しています。Linux では一部の行（リセット時刻・PR キャッシュなど）が正しく動作しません。
+> **対応 OS: macOS / Linux**
+> macOS（BSD 系コマンド）と Linux（GNU coreutils）の両方に対応しています。`uname` で OS を判定し、`date` / `stat` / `md5`（Linux では `md5sum`）を自動で切り替えます。
 
 以下のツールは [Homebrew](https://brew.sh/) でインストールできます。
 
@@ -111,17 +111,28 @@ echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_w
 
 ## カスタマイズ
 
-### 表示行を減らしたい
+各種の挙動は**環境変数**で変更できます（スクリプト本体を編集する必要はありません）。`settings.json` の `command` にインラインで指定するのが手軽です。
 
-不要な行のブロック（`# ─── Line N: ... ───` から次のブロックまで）をコメントアウトまたは削除してください。
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "CCSL_BAR_WIDTH=30 CCSL_SHOW_PR=0 ~/.claude/statusline.sh",
+    "padding": 1
+  }
+}
+```
 
-### プログレスバーの幅を変えたい
+| 環境変数 | 用途 | デフォルト |
+|---|---|---|
+| `CCSL_BAR_WIDTH` | コンテキストバーの幅（文字数） | `20` |
+| `CCSL_PR_TTL` | PR 番号キャッシュの有効期間（秒）。`gh pr view` は通信が発生するため、短くしすぎるとレスポンスに影響します | `300` |
+| `CCSL_TIME_FMT_5H` | 5時間リセット時刻の `strftime` 書式 | `%H:%M` |
+| `CCSL_TIME_FMT_7D` | 7日リセット時刻の `strftime` 書式 | `%-m/%-d %H:%M` |
+| `CCSL_SHOW_DIR` / `_GIT` / `_CONTEXT` / `_RATE` / `_PR` | 各行の表示切替（`1`=表示 / `0`=非表示） | `1` |
+| `CCSL_NO_COLOR` | ANSI カラーを無効化（標準の `NO_COLOR` も尊重します） | （未設定） |
 
-Line 3 の `W=20` の数値を変更します（文字数）。
-
-### PR 番号のキャッシュ時間を変えたい
-
-Line 5 の `300`（秒）を変更します。`gh pr view` は通信が発生するため、短くしすぎるとレスポンスに影響します。
+例: PR 行を消してバーを 30 文字に広げる → `CCSL_SHOW_PR=0 CCSL_BAR_WIDTH=30`
 
 ## 仕組み
 
@@ -143,4 +154,4 @@ Line 5 の `300`（秒）を変更します。`gh pr view` は通信が発生す
 
 ## ライセンス
 
-自由に改変・再配布してください。
+[MIT License](LICENSE) の下で公開しています。
