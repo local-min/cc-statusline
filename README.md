@@ -35,6 +35,8 @@ PR #324                                        ← 関連PR番号
 > **対応 OS: macOS**
 > このスクリプトは `date -r` / `stat -f` / `md5 -q` など BSD 系コマンドに依存しています。Linux では一部の行（リセット時刻・PR キャッシュなど）が正しく動作しません。
 
+以下のツールは [Homebrew](https://brew.sh/) でインストールできます。
+
 | ツール | 用途 | インストール |
 |---|---|---|
 | **jq** | JSON のパース（**必須**） | `brew install jq` |
@@ -47,10 +49,11 @@ PR #324                                        ← 関連PR番号
 
 ### 1. 前提ツールをインストール
 
-まだの場合のみ。すでに入っていればスキップして構いません。
+すでに入っていればスキップして構いません。
 
 ```bash
-brew install jq gh   # gh は任意（PR 番号表示用）
+brew install jq                   # 必須
+brew install gh && gh auth login  # 任意（PR 番号を表示したい場合のみ）
 ```
 
 ### 2. リポジトリを clone
@@ -65,13 +68,16 @@ cd cc-statusline
 clone したディレクトリ内で、`statusline.sh` を `~/.claude/` にコピーして実行権限を付与します。
 
 ```bash
+mkdir -p ~/.claude
 cp statusline.sh ~/.claude/statusline.sh
 chmod +x ~/.claude/statusline.sh
 ```
 
 ### 4. settings.json に追加
 
-`~/.claude/settings.json` に以下を追加します（既存の設定がある場合は `statusLine` キーを追記）。
+`~/.claude/settings.json` に `statusLine` を設定します。
+
+**ファイルがまだ無い場合**は、以下の内容で新規作成します。
 
 ```json
 {
@@ -82,6 +88,8 @@ chmod +x ~/.claude/statusline.sh
   }
 }
 ```
+
+**既存の設定がある場合**は、一番外側の `{ ... }` の中に `statusLine` キーだけを追記します（他のキーはそのまま残してください）。
 
 `padding` はステータスラインの上下余白（行数）です。お好みで `0`〜`2` を指定してください。
 
