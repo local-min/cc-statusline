@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tool versions
+        run: |
+          bash --version | head -1
+          jq --version
+          git --version
+          shellcheck --version
+
+      - name: Syntax check (bash -n)
+        run: bash -n statusline.sh tests/run.sh
+
+      - name: ShellCheck
+        run: shellcheck statusline.sh tests/run.sh
+
+      - name: Run tests
+        run: bash tests/run.sh
