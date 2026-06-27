@@ -80,6 +80,16 @@ check "HOME collapses to ~" "~/proj" \
 check "null used_percentage → 0%" "0%" \
   "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":null}}' | sl)"
 
+# context-token warning threshold (default 300k, configurable, 0 = off)
+check "context warning fires above 300k" "300k+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":350000}}' | sl)"
+checknot "no warning at 250k" "300k+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":250000}}' | sl)"
+check "CCSL_CTX_WARN_K=200 lowers threshold" "200k+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":250000}}' | CCSL_CTX_WARN_K=200 CCSL_NO_COLOR=1 bash "$SL")"
+checknot "CCSL_CTX_WARN_K=0 disables the warning" "k+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":350000}}' | CCSL_CTX_WARN_K=0 CCSL_NO_COLOR=1 bash "$SL")"
+
 checknot "non-numeric rate limit hidden" "5h" \
   "$(echo '{"cwd":"/tmp","rate_limits":{"five_hour":{"used_percentage":"oops"}}}' | sl)"
 
