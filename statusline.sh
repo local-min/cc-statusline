@@ -9,6 +9,7 @@
 #   CCSL_TIME_FMT_7D  strftime for 7d reset time            (default '%-m/%-d %H:%M')
 #   CCSL_SHOW_DIR / _GIT / _CONTEXT / _RATE / _PR   toggle each line (1/0, default 1)
 #   CCSL_SHOW_LINES   show session +added/-removed lines    (1/0, default 0)
+#   CCSL_CTX_WARN_K   context-token warning threshold (k)   (default 300, 0=off)
 #   CCSL_NO_COLOR=1   disable ANSI colors (the standard NO_COLOR is also honored)
 
 JSON=$(cat)
@@ -98,7 +99,7 @@ color_for() { # $1=int → green <50, yellow <80, red >=80 (non-numeric → gree
   IFS= read -r CWD_RAW
   IFS= read -r MODEL
   IFS= read -r PCT
-  IFS= read -r OVER200K
+  IFS= read -r CTX_TOKENS
   IFS= read -r FIVE_PCT
   IFS= read -r FIVE_RESET
   IFS= read -r SEVEN_PCT
@@ -112,7 +113,7 @@ color_for() { # $1=int → green <50, yellow <80, red >=80 (non-numeric → gree
   ( .cwd // .workspace.current_dir // ""                         | clean ),
   ( .model.display_name // ""                                    | clean ),
   ( .context_window.used_percentage | if type == "number" then floor else 0 end ),
-  ( .exceeds_200k_tokens // false ),
+  ( .context_window.total_input_tokens // 0 ),
   ( .rate_limits.five_hour.used_percentage  | (tonumber? | floor) // "" ),
   ( .rate_limits.five_hour.resets_at  // ""                      | clean ),
   ( .rate_limits.seven_day.used_percentage  | (tonumber? | floor) // "" ),
@@ -202,8 +203,12 @@ if [ "${CCSL_SHOW_CONTEXT:-1}" = "1" ]; then
   for ((i=0; i<E; i++)); do BAR+="░"; done
   BAR+="${RST}"
 
+  # Warn once context input tokens exceed the threshold (default 300k; 0 = off).
+  WARN_K=${CCSL_CTX_WARN_K:-300}
+  case "$WARN_K"     in ''|*[!0-9]*) WARN_K=300 ;; esac
+  case "$CTX_TOKENS" in ''|*[!0-9]*) CTX_TOKENS=0 ;; esac
   WARN=""
-  [ "$OVER200K" = "true" ] && WARN=" ${RED}⚠ 200k+${RST}"
+  [ "$WARN_K" -gt 0 ] && [ "$CTX_TOKENS" -gt $((WARN_K * 1000)) ] && WARN=" ${RED}⚠ ${WARN_K}k+${RST}"
 
   printf '%s\n' "🧠 ${BAR} ${PCT}%${WARN} │ 💪 ${BOLD}${MODEL}${RST}"
 fi

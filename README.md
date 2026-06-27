@@ -18,7 +18,7 @@ PR #324 ✓                                      ← 関連PR番号（レビュ�
 |---|---|---|
 | 1 | カレントディレクトリ | `$HOME` は `~` に短縮 |
 | 2 | リポジトリ名 / ブランチ名 / 差分 | `+N` = staged, `~N` = unstaged + untracked。git リポジトリ外では非表示。`CCSL_SHOW_LINES=1` でセッションの追加/削除行数（`📊 +N -N`）も表示 |
-| 3 | コンテキスト使用率 + モデル名 | プログレスバー付き。200k トークン超過時に `⚠ 200k+` を赤字表示 |
+| 3 | コンテキスト使用率 + モデル名 | プログレスバー付き。コンテキスト入力トークンがしきい値（デフォルト 300k）を超えると `⚠ 300k+` を赤字表示（`CCSL_CTX_WARN_K` で変更・無効化可） |
 | 4 | レートリミット（5時間 / 7日） | Claude Max / Pro プランのみ表示。リセット時刻付き |
 | 5 | PR 番号 | Claude Code が渡す `pr.number` を優先利用（**通信なし**）。無い場合のみ `gh` CLI で取得し 5 分間キャッシュ。レビュー状態を `✓`（approved）/ `✗`（changes_requested）/ `…`（pending）/ `draft` のバッジで表示。PR がなければ非表示 |
 
@@ -100,7 +100,7 @@ chmod +x ~/.claude/statusline.sh
 Claude Code を再起動する前に、モック JSON でスクリプト単体の動作を確認できます。
 
 ```bash
-echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_window":{"used_percentage":42},"exceeds_200k_tokens":false,"rate_limits":{"five_hour":{"used_percentage":15,"resets_at":1743850800},"seven_day":{"used_percentage":30,"resets_at":1744412400}}}' | ~/.claude/statusline.sh
+echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_window":{"used_percentage":42},"rate_limits":{"five_hour":{"used_percentage":15,"resets_at":1743850800},"seven_day":{"used_percentage":30,"resets_at":1744412400}}}' | ~/.claude/statusline.sh
 ```
 
 4 行目に `💰 5h 15% (🔄 20:00) │ 7d 30% (🔄 4/12 08:00)` のような表示が出れば成功です（時刻はローカルタイムゾーンに依存）。
@@ -133,6 +133,7 @@ echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_w
 | `CCSL_TIME_FMT_7D` | 7日リセット時刻の `strftime` 書式 | `%-m/%-d %H:%M` |
 | `CCSL_SHOW_DIR` / `_GIT` / `_CONTEXT` / `_RATE` / `_PR` | 各行の表示切替（`1`=表示 / `0`=非表示） | `1` |
 | `CCSL_SHOW_LINES` | 2 行目にセッションの追加/削除行数（`📊 +N -N`）を表示 | `0` |
+| `CCSL_CTX_WARN_K` | コンテキスト警告のしきい値（千トークン単位）。`total_input_tokens` が超過すると `⚠ Nk+` を赤字表示。`0` で無効化 | `300` |
 | `CCSL_NO_COLOR` | ANSI カラーを無効化（標準の `NO_COLOR` も尊重します） | （未設定） |
 
 例: PR 行を消してバーを 30 文字に広げる → `CCSL_SHOW_PR=0 CCSL_BAR_WIDTH=30`
