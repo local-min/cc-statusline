@@ -259,11 +259,18 @@ if [ "${CCSL_SHOW_PR:-1}" = "1" ]; then
   # fallback only runs inside a git work tree.
   if [ -z "$PR_NUM" ] && [ "$IN_GIT" = "1" ] && command -v gh >/dev/null 2>&1; then
     PR_TTL=${CCSL_PR_TTL:-300}
-    CACHE_DIR="${TMPDIR:-/tmp}/claude-statusline"
+    case "$PR_TTL" in ''|*[!0-9]*) PR_TTL=300 ;; esac
+    # One cache directory per user, created private. On a shared /tmp (Linux)
+    # a fixed name would let another user pre-create it, or plant symlinks in
+    # it that our writes would follow; so the directory must be ours, not a
+    # symlink, and mode 700 — otherwise we do a single uncached lookup.
+    CACHE_DIR="${TMPDIR:-/tmp}/claude-statusline-$(id -u 2>/dev/null || echo 0)"
 
     gh_pr() { ( cd "${CWD_RAW:-.}" 2>/dev/null && gh pr view --json number -q '.number' 2>/dev/null ); }
 
-    if mkdir -p "$CACHE_DIR" 2>/dev/null && [ -w "$CACHE_DIR" ]; then
+    if (umask 077 && mkdir -p "$CACHE_DIR") 2>/dev/null \
+       && [ -d "$CACHE_DIR" ] && [ ! -L "$CACHE_DIR" ] && [ -O "$CACHE_DIR" ] \
+       && chmod 700 "$CACHE_DIR" 2>/dev/null; then
       BRANCH_KEY=$(printf '%s' "${TOPLEVEL}:${BRANCH}" | hash_str 2>/dev/null || echo none)
       PR_CACHE="${CACHE_DIR}/pr-${BRANCH_KEY}"
       NOW=$(date +%s)
@@ -282,6 +289,10 @@ if [ "${CCSL_SHOW_PR:-1}" = "1" ]; then
       PR_NUM=$(gh_pr)
     fi
   fi
+
+  # A PR number is digits. Anything else — a corrupted cache file, an odd
+  # JSON value — is dropped rather than printed.
+  case "$PR_NUM" in *[!0-9]*) PR_NUM='' ;; esac
 
   if [ -n "$PR_NUM" ]; then
     BADGE=""

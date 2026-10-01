@@ -20,7 +20,7 @@ PR #324 ✓                                      ← 関連PR番号（レビュ�
 | 2 | リポジトリ名 / ブランチ名 / 差分 | `+N` = staged, `~N` = unstaged + untracked。git リポジトリ外では非表示。`CCSL_SHOW_LINES=1` でセッションの追加/削除行数（`📊 +N -N`）も表示 |
 | 3 | コンテキスト使用率 + モデル名 | プログレスバー付き。使用率がしきい値（デフォルト 70%）に達すると `⚠ 70%+` を赤字表示（`CCSL_CTX_WARN_PCT` で変更・無効化可）。使用率は Claude Code が実際のコンテキストウィンドウ（200k / 1M）に対して計算した値なので、モデルが変わっても同じ意味になります |
 | 4 | レートリミット（5時間 / 7日） | Claude Max / Pro プランのみ表示。リセット時刻付き |
-| 5 | PR 番号 | Claude Code が渡す `pr.number` を優先利用（**通信なし**）。無い場合のみ `gh` CLI で取得し 5 分間キャッシュ。レビュー状態を `✓`（approved）/ `✗`（changes_requested）/ `…`（pending）/ `draft` のバッジで表示。PR がなければ非表示 |
+| 5 | PR 番号 | Claude Code が渡す `pr.number` を優先利用（**通信なし**）。無い場合のみ `gh` CLI で取得し 5 分間キャッシュ（キャッシュは `${TMPDIR:-/tmp}/claude-statusline-<uid>` に本人専用〔mode 700〕で置き、他人が作ったディレクトリやシンボリックリンクは使わない。数字以外の値は表示しない）。レビュー状態を `✓`（approved）/ `✗`（changes_requested）/ `…`（pending）/ `draft` のバッジで表示。PR がなければ非表示 |
 
 > **git の参照ディレクトリ**: 2 行目・5 行目の git / PR 情報は、JSON で渡される `cwd`（Claude Code が表示しているディレクトリ）を基準に取得します（`git -C "$cwd"`）。スクリプト自身のカレントディレクトリには依存しません。
 
