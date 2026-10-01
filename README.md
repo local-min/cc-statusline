@@ -18,7 +18,7 @@ PR #324 ✓                                      ← 関連PR番号（レビュ�
 |---|---|---|
 | 1 | カレントディレクトリ | `$HOME` は `~` に短縮 |
 | 2 | リポジトリ名 / ブランチ名 / 差分 | `+N` = staged, `~N` = unstaged + untracked。git リポジトリ外では非表示。`CCSL_SHOW_LINES=1` でセッションの追加/削除行数（`📊 +N -N`）も表示 |
-| 3 | コンテキスト使用率 + モデル名 | プログレスバー付き。コンテキスト入力トークンがしきい値（デフォルト 300k）を超えると `⚠ 300k+` を赤字表示（`CCSL_CTX_WARN_K` で変更・無効化可） |
+| 3 | コンテキスト使用率 + モデル名 | プログレスバー付き。使用率がしきい値（デフォルト 70%）に達すると `⚠ 70%+` を赤字表示（`CCSL_CTX_WARN_PCT` で変更・無効化可）。使用率は Claude Code が実際のコンテキストウィンドウ（200k / 1M）に対して計算した値なので、モデルが変わっても同じ意味になります |
 | 4 | レートリミット（5時間 / 7日） | Claude Max / Pro プランのみ表示。リセット時刻付き |
 | 5 | PR 番号 | Claude Code が渡す `pr.number` を優先利用（**通信なし**）。無い場合のみ `gh` CLI で取得し 5 分間キャッシュ。レビュー状態を `✓`（approved）/ `✗`（changes_requested）/ `…`（pending）/ `draft` のバッジで表示。PR がなければ非表示 |
 
@@ -133,10 +133,13 @@ echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_w
 | `CCSL_TIME_FMT_7D` | 7日リセット時刻の `strftime` 書式 | `%-m/%-d %H:%M` |
 | `CCSL_SHOW_DIR` / `_GIT` / `_CONTEXT` / `_RATE` / `_PR` | 各行の表示切替（`1`=表示 / `0`=非表示） | `1` |
 | `CCSL_SHOW_LINES` | 2 行目にセッションの追加/削除行数（`📊 +N -N`）を表示 | `0` |
-| `CCSL_CTX_WARN_K` | コンテキスト警告のしきい値（千トークン単位）。`total_input_tokens` が超過すると `⚠ Nk+` を赤字表示。`0` で無効化 | `300` |
+| `CCSL_CTX_WARN_PCT` | コンテキスト警告のしきい値（%）。`context_window.used_percentage` がこの値以上になると `⚠ N%+` を赤字表示。`0` で無効化。非数値はデフォルトに戻ります | `70` |
+| `CCSL_CTX_WARN_K` | 絶対値によるコンテキスト警告のしきい値（千トークン単位）。`total_input_tokens` が超過すると `⚠ Nk+` を赤字表示。`0` で無効化。`CCSL_CTX_WARN_PCT` と両方が該当するときは使用率の警告を表示します | `0`（無効） |
 | `CCSL_NO_COLOR` | ANSI カラーを無効化（標準の `NO_COLOR` も尊重します） | （未設定） |
 
 例: PR 行を消してバーを 30 文字に広げる → `CCSL_SHOW_PR=0 CCSL_BAR_WIDTH=30`
+
+以前の既定（入力トークン 300k 超で警告）に戻す → `CCSL_CTX_WARN_PCT=0 CCSL_CTX_WARN_K=300`
 
 ## 仕組み
 

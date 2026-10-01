@@ -80,15 +80,34 @@ check "HOME collapses to ~" "~/proj" \
 check "null used_percentage → 0%" "0%" \
   "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":null}}' | sl)"
 
-# context-token warning threshold (default 300k, configurable, 0 = off)
-check "context warning fires above 300k" "300k+" \
-  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":350000}}' | sl)"
-checknot "no warning at 250k" "300k+" \
-  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":250000}}' | sl)"
-check "CCSL_CTX_WARN_K=200 lowers threshold" "200k+" \
-  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":250000}}' | CCSL_CTX_WARN_K=200 CCSL_NO_COLOR=1 bash "$SL")"
-checknot "CCSL_CTX_WARN_K=0 disables the warning" "k+" \
-  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":350000}}' | CCSL_CTX_WARN_K=0 CCSL_NO_COLOR=1 bash "$SL")"
+# context-usage warning threshold (default 70%, configurable, 0 = off)
+check "usage warning fires at 70%" "70%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":70,"total_input_tokens":700000}}' | sl)"
+checknot "no usage warning at 69.9% (floored to 69)" "%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":69.9,"total_input_tokens":699000}}' | sl)"
+# The case the old absolute default never caught: a 200k window at 75% is
+# 150k tokens, far below 300k.
+check "usage warning fires in a 200k window" "70%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":75,"total_input_tokens":150000,"context_window_size":200000}}' | sl)"
+check "CCSL_CTX_WARN_PCT=50 lowers threshold" "50%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":55}}' | CCSL_CTX_WARN_PCT=50 CCSL_NO_COLOR=1 bash "$SL")"
+checknot "CCSL_CTX_WARN_PCT=0 disables the warning" "%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":95}}' | CCSL_CTX_WARN_PCT=0 CCSL_NO_COLOR=1 bash "$SL")"
+check "garbage CCSL_CTX_WARN_PCT falls back to 70" "70%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":80}}' | CCSL_CTX_WARN_PCT=abc CCSL_NO_COLOR=1 bash "$SL")"
+checknot "null used_percentage never warns" "%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":null}}' | sl)"
+
+# context-token warning threshold (default off, configurable)
+checknot "no token warning by default (300k is 30% of a 1M window)" "k+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":35,"total_input_tokens":350000}}' | sl)"
+check "CCSL_CTX_WARN_K=300 restores the absolute warning" "300k+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":35,"total_input_tokens":350000}}' | CCSL_CTX_WARN_K=300 CCSL_NO_COLOR=1 bash "$SL")"
+checknot "token warning silent at or below its threshold" "k+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":25,"total_input_tokens":250000}}' | CCSL_CTX_WARN_K=300 CCSL_NO_COLOR=1 bash "$SL")"
+both=$(echo '{"cwd":"/tmp","context_window":{"used_percentage":80,"total_input_tokens":800000}}' | CCSL_CTX_WARN_K=300 CCSL_NO_COLOR=1 bash "$SL")
+check    "usage warning wins when both fire" "70%+" "$both"
+checknot "token warning suppressed when both fire" "300k+" "$both"
 
 checknot "non-numeric rate limit hidden" "5h" \
   "$(echo '{"cwd":"/tmp","rate_limits":{"five_hour":{"used_percentage":"oops"}}}' | sl)"
