@@ -80,15 +80,34 @@ check "HOME collapses to ~" "~/proj" \
 check "null used_percentage → 0%" "0%" \
   "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":null}}' | sl)"
 
-# context-token warning threshold (default 300k, configurable, 0 = off)
-check "context warning fires above 300k" "300k+" \
-  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":350000}}' | sl)"
-checknot "no warning at 250k" "300k+" \
-  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":250000}}' | sl)"
-check "CCSL_CTX_WARN_K=200 lowers threshold" "200k+" \
-  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":250000}}' | CCSL_CTX_WARN_K=200 CCSL_NO_COLOR=1 bash "$SL")"
-checknot "CCSL_CTX_WARN_K=0 disables the warning" "k+" \
-  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":50,"total_input_tokens":350000}}' | CCSL_CTX_WARN_K=0 CCSL_NO_COLOR=1 bash "$SL")"
+# context-usage warning threshold (default 70%, configurable, 0 = off)
+check "usage warning fires at 70%" "70%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":70,"total_input_tokens":700000}}' | sl)"
+checknot "no usage warning at 69.9% (floored to 69)" "%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":69.9,"total_input_tokens":699000}}' | sl)"
+# The case the old absolute default never caught: a 200k window at 75% is
+# 150k tokens, far below 300k.
+check "usage warning fires in a 200k window" "70%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":75,"total_input_tokens":150000,"context_window_size":200000}}' | sl)"
+check "CCSL_CTX_WARN_PCT=50 lowers threshold" "50%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":55}}' | CCSL_CTX_WARN_PCT=50 CCSL_NO_COLOR=1 bash "$SL")"
+checknot "CCSL_CTX_WARN_PCT=0 disables the warning" "%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":95}}' | CCSL_CTX_WARN_PCT=0 CCSL_NO_COLOR=1 bash "$SL")"
+check "garbage CCSL_CTX_WARN_PCT falls back to 70" "70%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":80}}' | CCSL_CTX_WARN_PCT=abc CCSL_NO_COLOR=1 bash "$SL")"
+checknot "null used_percentage never warns" "%+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":null}}' | sl)"
+
+# context-token warning threshold (default off, configurable)
+checknot "no token warning by default (300k is 30% of a 1M window)" "k+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":35,"total_input_tokens":350000}}' | sl)"
+check "CCSL_CTX_WARN_K=300 restores the absolute warning" "300k+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":35,"total_input_tokens":350000}}' | CCSL_CTX_WARN_K=300 CCSL_NO_COLOR=1 bash "$SL")"
+checknot "token warning silent at or below its threshold" "k+" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":25,"total_input_tokens":250000}}' | CCSL_CTX_WARN_K=300 CCSL_NO_COLOR=1 bash "$SL")"
+both=$(echo '{"cwd":"/tmp","context_window":{"used_percentage":80,"total_input_tokens":800000}}' | CCSL_CTX_WARN_K=300 CCSL_NO_COLOR=1 bash "$SL")
+check    "usage warning wins when both fire" "70%+" "$both"
+checknot "token warning suppressed when both fire" "300k+" "$both"
 
 checknot "non-numeric rate limit hidden" "5h" \
   "$(echo '{"cwd":"/tmp","rate_limits":{"five_hour":{"used_percentage":"oops"}}}' | sl)"
@@ -116,6 +135,39 @@ if [ -z "$bw_err" ]; then
 else
   printf 'FAIL  bad CCSL_BAR_WIDTH stderr: %s\n' "$bw_err"; fail=$((fail + 1))
 fi
+
+# PR cache: per-user, private, never through a symlink, digits only.
+FAKEBIN=$(mktemp -d 2>/dev/null || mktemp -d -t ccslbin)
+CACHE_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t ccsltmp)
+trap 'rm -rf "$REPO" "$FAKEBIN" "$CACHE_TMP"' EXIT
+printf '#!/bin/sh\necho 42\n' > "$FAKEBIN/gh"; chmod +x "$FAKEBIN/gh"
+j_nopr=$(printf '{"cwd":"%s"}' "$REPO")
+uid=$(id -u)
+out=$(printf '%s' "$j_nopr" | PATH="$FAKEBIN:$PATH" TMPDIR="$CACHE_TMP" CCSL_NO_COLOR=1 bash "$SL")
+check "gh fallback shows the PR" "PR #42" "$out"
+if [ -d "$CACHE_TMP/claude-statusline-$uid" ] && [ ! -L "$CACHE_TMP/claude-statusline-$uid" ]; then
+  printf 'PASS  cache directory is per-user\n'; pass=$((pass + 1))
+else
+  printf 'FAIL  cache directory is per-user (no %s)\n' "$CACHE_TMP/claude-statusline-$uid"; fail=$((fail + 1))
+fi
+mode=$(stat -f %Lp "$CACHE_TMP/claude-statusline-$uid" 2>/dev/null || stat -c %a "$CACHE_TMP/claude-statusline-$uid" 2>/dev/null)
+check "cache directory is mode 700" "700" "mode=$mode"
+for f in "$CACHE_TMP/claude-statusline-$uid"/pr-*; do printf '9\033[31mX' > "$f"; done
+out=$(printf '%s' "$j_nopr" | PATH="$FAKEBIN:$PATH" TMPDIR="$CACHE_TMP" CCSL_NO_COLOR=1 bash "$SL")
+checknot "a corrupted cache value is not printed" "PR #" "$out"
+checknot "no ESC from the cache reaches the output" "$(printf '\033')" "$out"
+rm -rf "$CACHE_TMP/claude-statusline-$uid"
+mkdir "$CACHE_TMP/elsewhere"
+ln -s "$CACHE_TMP/elsewhere" "$CACHE_TMP/claude-statusline-$uid"
+out=$(printf '%s' "$j_nopr" | PATH="$FAKEBIN:$PATH" TMPDIR="$CACHE_TMP" CCSL_NO_COLOR=1 bash "$SL")
+check "a symlinked cache directory falls back to an uncached lookup" "PR #42" "$out"
+if [ -z "$(ls -A "$CACHE_TMP/elsewhere")" ]; then
+  printf 'PASS  nothing written through a symlinked cache directory\n'; pass=$((pass + 1))
+else
+  printf 'FAIL  wrote through a symlinked cache directory: %s\n' "$(ls -A "$CACHE_TMP/elsewhere")"; fail=$((fail + 1))
+fi
+checknot "a non-numeric pr.number is not printed" "PR #" \
+  "$(echo '{"cwd":"/tmp","pr":{"number":"7; rm"}}' | sl)"
 
 if echo '{}' | sl >/dev/null 2>&1; then
   echo "PASS  empty object does not crash"; pass=$((pass + 1))
