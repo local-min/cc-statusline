@@ -100,6 +100,7 @@ color_for() { # $1=int → green <50, yellow <80, red >=80 (non-numeric → gree
   IFS= read -r CWD_RAW
   IFS= read -r MODEL
   IFS= read -r PCT
+  IFS= read -r CTX_STATE
   IFS= read -r CTX_TOKENS
   IFS= read -r FIVE_PCT
   IFS= read -r FIVE_RESET
@@ -113,7 +114,24 @@ color_for() { # $1=int → green <50, yellow <80, red >=80 (non-numeric → gree
   def clean: if type == "string" then gsub("[[:cntrl:]]"; "") else (. | tostring) end;
   ( .cwd // .workspace.current_dir // ""                         | clean ),
   ( .model.display_name // ""                                    | clean ),
-  ( .context_window.used_percentage | if type == "number" then floor else 0 end ),
+  # Context usage, or "" when it is not known. current_usage is null before the
+  # first API call and again after a compaction (manual, auto or idle) until the
+  # next call, so any used_percentage alongside it is not a live figure. When
+  # used_percentage alone is missing, rebuild it the documented way: input
+  # tokens only, against context_window_size.
+  ( .context_window | if type == "object" then . else {} end
+    | if has("current_usage") and .current_usage == null then ""
+      elif (.used_percentage | type) == "number" then .used_percentage | floor
+      elif (.current_usage | type) == "object" and (.context_window_size | type) == "number"
+           and .context_window_size > 0 then
+        ([ .current_usage | .input_tokens, .cache_creation_input_tokens, .cache_read_input_tokens
+           | numbers ] | add // 0) * 100 / .context_window_size | floor
+      else "" end ),
+  # "compacted" when that null comes after the session has had an API response
+  # (prompt_cache only appears from then on), i.e. a compaction just finished.
+  ( if (.context_window | type) == "object" and (.context_window | has("current_usage"))
+       and .context_window.current_usage == null and (.prompt_cache | type) == "object"
+    then "compacted" else "" end ),
   ( .context_window.total_input_tokens // 0 ),
   ( .rate_limits.five_hour.used_percentage  | (tonumber? | floor) // "" ),
   ( .rate_limits.five_hour.resets_at  // ""                      | clean ),
@@ -187,7 +205,10 @@ fi
 
 # ─── Line 3: Context bar | Model ───
 if [ "${CCSL_SHOW_CONTEXT:-1}" = "1" ]; then
-  case "$PCT" in ''|*[!0-9]*) PCT=0 ;; esac
+  # An unknown figure is shown as such, not as 0%: right after a compaction the
+  # real usage is only known once the next API response arrives.
+  CTX_KNOWN=1
+  case "$PCT" in ''|*[!0-9]*) CTX_KNOWN=0; PCT=0 ;; esac
 
   W=${CCSL_BAR_WIDTH:-20}
   case "$W" in ''|*[!0-9]*) W=20 ;; esac
@@ -215,26 +236,43 @@ if [ "${CCSL_SHOW_CONTEXT:-1}" = "1" ]; then
   case "$WARN_K"     in ''|*[!0-9]*) WARN_K=0 ;; esac
   case "$CTX_TOKENS" in ''|*[!0-9]*) CTX_TOKENS=0 ;; esac
   WARN=""
-  if [ "$WARN_PCT" -gt 0 ] && [ "$PCT" -ge "$WARN_PCT" ]; then
+  if [ "$CTX_KNOWN" = "0" ]; then
+    :  # never warn on a figure that is not live (token totals may be stale too)
+  elif [ "$WARN_PCT" -gt 0 ] && [ "$PCT" -ge "$WARN_PCT" ]; then
     WARN=" ${RED}⚠ ${WARN_PCT}%+${RST}"
   elif [ "$WARN_K" -gt 0 ] && [ "$CTX_TOKENS" -gt $((WARN_K * 1000)) ]; then
     WARN=" ${RED}⚠ ${WARN_K}k+${RST}"
   fi
 
-  printf '%s\n' "🧠 ${BAR} ${PCT}%${WARN} │ 💪 ${BOLD}${MODEL}${RST}"
+  if [ "$CTX_KNOWN" = "1" ]; then
+    USAGE="${PCT}%"
+  elif [ "$CTX_STATE" = "compacted" ]; then
+    USAGE="${CYN}↺ compacted${RST}"
+  else
+    USAGE="${DIM}--%${RST}"
+  fi
+
+  printf '%s\n' "🧠 ${BAR} ${USAGE}${WARN} │ 💪 ${BOLD}${MODEL}${RST}"
 fi
 
 # ─── Line 4: Rate limits (Claude Max/Pro) ───
-if [ "${CCSL_SHOW_RATE:-1}" = "1" ] && [ -n "$FIVE_PCT" ]; then
-  FC=$(color_for "$FIVE_PCT")
+# Each window is shown on its own: Claude Code drops a window from the JSON once
+# its resets_at passes (e.g. the 5h one while the session sits idle), and the
+# other window must not disappear with it.
+if [ "${CCSL_SHOW_RATE:-1}" = "1" ] && { [ -n "$FIVE_PCT" ] || [ -n "$SEVEN_PCT" ]; }; then
+  LINE=""
 
-  FIVE_TIME=""
-  if [ -n "$FIVE_RESET" ]; then
-    t=$(reset_to_time "$FIVE_RESET" "${CCSL_TIME_FMT_5H:-%H:%M}")
-    [ -n "$t" ] && FIVE_TIME=" (🔄 ${t})"
+  if [ -n "$FIVE_PCT" ]; then
+    FC=$(color_for "$FIVE_PCT")
+
+    FIVE_TIME=""
+    if [ -n "$FIVE_RESET" ]; then
+      t=$(reset_to_time "$FIVE_RESET" "${CCSL_TIME_FMT_5H:-%H:%M}")
+      [ -n "$t" ] && FIVE_TIME=" (🔄 ${t})"
+    fi
+
+    LINE="5h ${FC}${FIVE_PCT}%${RST}${FIVE_TIME}"
   fi
-
-  LINE="💰 5h ${FC}${FIVE_PCT}%${RST}${FIVE_TIME}"
 
   if [ -n "$SEVEN_PCT" ]; then
     SC=$(color_for "$SEVEN_PCT")
@@ -245,10 +283,11 @@ if [ "${CCSL_SHOW_RATE:-1}" = "1" ] && [ -n "$FIVE_PCT" ]; then
       [ -n "$t" ] && SEVEN_TIME=" (🔄 ${t})"
     fi
 
-    LINE+=" │ 7d ${SC}${SEVEN_PCT}%${RST}${SEVEN_TIME}"
+    [ -n "$LINE" ] && LINE+=" │ "
+    LINE+="7d ${SC}${SEVEN_PCT}%${RST}${SEVEN_TIME}"
   fi
 
-  printf '%s\n' "$LINE"
+  printf '%s\n' "💰 ${LINE}"
 fi
 
 # ─── Line 5: PR number ───
