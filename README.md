@@ -169,9 +169,34 @@ Claude Code は、最初の API 呼び出しの前と、compaction の直後（�
 | `↺ compacted` | compaction 直後。次の応答で実際の使用率に戻ります | `current_usage` が `null` で、`prompt_cache` がある（＝このセッションで API 応答を受け取り済み） |
 | `--%` | セッション開始直後など、使用率が分からない | 上記以外で使用率が得られない |
 
-- 200K トークンを超えた会話を約 1 時間放置すると、Claude Code は [idle compaction](https://code.claude.com/docs/en/settings-reference#idlecompaction) で会話を要約します。席を外して戻ったときに `↺ compacted` が出ているのはこのためです
+- しきい値（デフォルト 200K トークン）を超えた会話を約 1 時間放置すると、Claude Code は [idle compaction](https://code.claude.com/docs/en/settings-reference#idlecompaction) で会話を要約します。席を外して戻ったときに `↺ compacted` が出ているのはこのためです。しきい値や ON/OFF は [idle compaction の設定](#idle-compaction-の設定claude-code-側) で変えられます
 - 使用率が分からない間は、`CCSL_CTX_WARN_PCT` / `CCSL_CTX_WARN_K` の警告も出しません（compaction 前のトークン数が残っていても誤って警告しないため）
 - `used_percentage` だけが欠けていて `current_usage` がある場合は、公式と同じ計算式（`input_tokens + cache_creation_input_tokens + cache_read_input_tokens`）で `context_window_size` に対する割合を求めます
+
+### idle compaction の設定（Claude Code 側）
+
+idle compaction は Claude Code 本体の機能で、このスクリプトの設定ではありません。どの設定でもステータスラインはそのまま動きます。設定は `~/.claude/settings.json` に書きます（[公式ドキュメント](https://code.claude.com/docs/en/settings-reference#idlecompaction)）。
+
+| やりたいこと | 設定 | 備考 |
+|---|---|---|
+| 発動するコンテキストの大きさを変える | `env` の `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` | トークン数で指定（デフォルト `200000`）。`100000` 未満は `100000` になります |
+| idle compaction だけ止める | `"idleCompaction": false`（または `/config` の **Idle compaction**） | 上限に近づいたときの自動 compaction は残ります |
+| 自動 compaction ごと止める | `"autoCompactEnabled": false`（または `/config` の **Auto-compact**） | idle compaction も止まります。手動の `/compact` は使えます |
+
+しきい値は % では指定できないので、使っているモデルのコンテキストウィンドウから計算します。例えば 1M ウィンドウ（Opus 4.7 以降、Sonnet 5 以降、Fable など）で「50% 以上のときだけ」にするなら `500000` です。
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS": "500000"
+  }
+}
+```
+
+- 既存の `settings.json` に追記するときは、一番外側の `{ ... }` に `env` キーを足します（すでに `env` があればその中に追加）
+- 新しく起動したセッションから確実に反映されます。設定を消した場合も、反映は次の起動からです
+- しきい値を上げたり idle compaction を止めたりすると、その分だけ要約されずに残る会話が増えます。1 時間以上放置した後の最初のメッセージでは、プロンプトキャッシュが切れているため、コンテキスト全体をキャッシュなしで処理し直します（応答が遅くなり、レートリミットの消費も増えます）
+- 発動するのは、対話セッションで、自動 compaction が有効で、1 時間のプロンプトキャッシュを使っているときです。`idleCompaction` キーは Claude Code v2.1.290 以降、`/config` の行は v2.1.302 以降で使えます
 
 ## トラブルシューティング
 
