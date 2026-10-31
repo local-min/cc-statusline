@@ -77,8 +77,30 @@ checknot "no ~2 mangling" "~2/proj" \
 check "HOME collapses to ~" "~/proj" \
   "$(echo '{"cwd":"/home/me/proj"}' | HOME=/home/me CCSL_SHOW_GIT=0 CCSL_SHOW_PR=0 CCSL_NO_COLOR=1 bash "$SL")"
 
-check "null used_percentage → 0%" "0%" \
+check    "null used_percentage → --% (unknown, not 0%)" "--%" \
   "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":null}}' | sl)"
+checknot "null used_percentage is not shown as 0%" " 0%" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":null}}' | sl)"
+
+# Right after a compaction (manual, auto or idle) current_usage is null until
+# the next API call; prompt_cache tells it apart from a brand-new session.
+j_compacted='{"cwd":"/tmp","context_window":{"used_percentage":null,"current_usage":null,"total_input_tokens":0},"prompt_cache":{"warm":true}}'
+check    "null current_usage after an API response → compacted" "↺ compacted" "$(printf '%s' "$j_compacted" | sl)"
+checknot "compacted state is not shown as 0%" " 0%" "$(printf '%s' "$j_compacted" | sl)"
+j_stale='{"cwd":"/tmp","context_window":{"used_percentage":49,"current_usage":null,"total_input_tokens":490000},"prompt_cache":{"warm":true}}'
+check    "stale used_percentage beside a null current_usage → compacted" "↺ compacted" "$(printf '%s' "$j_stale" | sl)"
+checknot "stale used_percentage is not shown" "49%" "$(printf '%s' "$j_stale" | sl)"
+checknot "stale token total never warns" "k+" \
+  "$(printf '%s' "$j_stale" | CCSL_CTX_WARN_K=300 CCSL_NO_COLOR=1 bash "$SL")"
+j_fresh='{"cwd":"/tmp","context_window":{"used_percentage":null,"current_usage":null}}'
+check    "null current_usage before the first response → --%" "--%" "$(printf '%s' "$j_fresh" | sl)"
+checknot "a new session is not reported as compacted" "compacted" "$(printf '%s' "$j_fresh" | sl)"
+check "missing used_percentage rebuilt from current_usage (input only)" "25%" \
+  "$(echo '{"cwd":"/tmp","context_window":{"context_window_size":200000,"current_usage":{"input_tokens":1000,"cache_creation_input_tokens":9000,"cache_read_input_tokens":40000,"output_tokens":5000}}}' | sl)"
+check "used_percentage wins over current_usage when both are present" "42%" \
+  "$(echo '{"cwd":"/tmp","context_window":{"used_percentage":42,"context_window_size":200000,"current_usage":{"input_tokens":1000}}}' | sl)"
+check "non-object context_window → --%" "--%" \
+  "$(echo '{"cwd":"/tmp","model":{"display_name":"Opus"},"context_window":"weird"}' | sl)"
 
 # context-usage warning threshold (default 70%, configurable, 0 = off)
 check "usage warning fires at 70%" "70%+" \
@@ -114,6 +136,14 @@ checknot "non-numeric rate limit hidden" "5h" \
 
 check "rate limit floored to integer" "5h 23%" \
   "$(echo '{"cwd":"/tmp","rate_limits":{"five_hour":{"used_percentage":23.7,"resets_at":1743850800}}}' | sl)"
+
+# Claude Code drops a window once its resets_at passes (e.g. 5h while idle);
+# the remaining window must still be shown.
+only7=$(echo '{"cwd":"/tmp","rate_limits":{"seven_day":{"used_percentage":36,"resets_at":1793000000}}}' | sl)
+check    "7d shown when the 5h window is absent" "💰 7d 36%" "$only7"
+checknot "no 5h segment when the 5h window is absent" "5h" "$only7"
+both_rl=$(echo '{"cwd":"/tmp","rate_limits":{"five_hour":{"used_percentage":12},"seven_day":{"used_percentage":36}}}' | sl)
+check "both windows joined on one line" "💰 5h 12% │ 7d 36%" "$both_rl"
 
 check "ISO8601 reset renders a time" "🔄" \
   "$(echo '{"cwd":"/tmp","rate_limits":{"five_hour":{"used_percentage":15,"resets_at":"2026-06-26T16:00:00Z"}}}' | sl)"

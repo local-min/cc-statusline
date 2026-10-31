@@ -18,8 +18,8 @@ PR #324 ✓                                      ← 関連PR番号（レビュ�
 |---|---|---|
 | 1 | カレントディレクトリ | `$HOME` は `~` に短縮 |
 | 2 | リポジトリ名 / ブランチ名 / 差分 | `+N` = staged, `~N` = unstaged + untracked。git リポジトリ外では非表示。`CCSL_SHOW_LINES=1` でセッションの追加/削除行数（`📊 +N -N`）も表示 |
-| 3 | コンテキスト使用率 + モデル名 | プログレスバー付き。使用率がしきい値（デフォルト 70%）に達すると `⚠ 70%+` を赤字表示（`CCSL_CTX_WARN_PCT` で変更・無効化可）。使用率は Claude Code が実際のコンテキストウィンドウ（200k / 1M）に対して計算した値なので、モデルが変わっても同じ意味になります |
-| 4 | レートリミット（5時間 / 7日） | Claude Max / Pro プランのみ表示。リセット時刻付き |
+| 3 | コンテキスト使用率 + モデル名 | プログレスバー付き。使用率がしきい値（デフォルト 70%）に達すると `⚠ 70%+` を赤字表示（`CCSL_CTX_WARN_PCT` で変更・無効化可）。使用率は Claude Code が実際のコンテキストウィンドウ（200k / 1M）に対して計算した値なので、モデルが変わっても同じ意味になります。使用率がまだ分からないときは `0%` ではなく、compaction 直後なら `↺ compacted`、セッション開始直後などは `--%` と表示します（詳しくは[コンテキスト使用率が分からないとき](#コンテキスト使用率が分からないとき)） |
+| 4 | レートリミット（5時間 / 7日） | Claude Max / Pro プランのみ表示。リセット時刻付き。5時間枠と7日枠は個別に表示し、片方がリセットされて JSON から消えても、もう片方は残ります |
 | 5 | PR 番号 | Claude Code が渡す `pr.number` を優先利用（**通信なし**）。無い場合のみ `gh` CLI で取得し 5 分間キャッシュ（キャッシュは `${TMPDIR:-/tmp}/claude-statusline-<uid>` に本人専用〔mode 700〕で置き、他人が作ったディレクトリやシンボリックリンクは使わない。数字以外の値は表示しない）。レビュー状態を `✓`（approved）/ `✗`（changes_requested）/ `…`（pending）/ `draft` のバッジで表示。PR がなければ非表示 |
 
 > **git の参照ディレクトリ**: 2 行目・5 行目の git / PR 情報は、JSON で渡される `cwd`（Claude Code が表示しているディレクトリ）を基準に取得します（`git -C "$cwd"`）。スクリプト自身のカレントディレクトリには依存しません。
@@ -143,7 +143,11 @@ echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_w
 
 ## 仕組み
 
-- Claude Code はメッセージ応答のたびに `statusline.sh` を実行し、セッション情報を JSON で stdin に渡します
+- Claude Code は `statusline.sh` を実行し、セッション情報を JSON で stdin に渡します。実行されるのはセッション開始時と、主に次のタイミングです（[公式ドキュメント](https://code.claude.com/docs/en/statusline)）
+  - アシスタントの応答が届いたとき
+  - `/compact` や自動 compaction（アイドル時の idle compaction を含む）が終わったとき
+  - レートリミット枠が `resets_at` に達したとき、プロンプトキャッシュが `expires_at` に達したとき
+  - `refreshInterval` を設定している場合はその間隔ごと
 - スクリプトの stdout がステータスラインとして画面下部に表示されます
 - ANSI エスケープコードによるカラー表示に対応しています
 - スクリプトはローカルで実行されるため、API トークンは消費しません
@@ -156,6 +160,19 @@ echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_w
 - **不正な JSON は明示**：パースに失敗した場合は黙って空表示にせず、`(statusline) invalid JSON on stdin` と短く表示します
 - **クロスプラットフォーム**：`date` / `stat` / `md5` の差異を `uname` で吸収（macOS / Linux 両対応）。`resets_at` は epoch 秒前提ですが、念のため ISO8601 もベストエフォートで解釈します
 
+### コンテキスト使用率が分からないとき
+
+Claude Code は、最初の API 呼び出しの前と、compaction の直後（次の API 呼び出しまで）に `context_window.current_usage` を `null` で渡します。このとき実際の使用量はまだ分からないため、`0%` とは表示しません。
+
+| 表示 | 状態 | 判定 |
+|---|---|---|
+| `↺ compacted` | compaction 直後。次の応答で実際の使用率に戻ります | `current_usage` が `null` で、`prompt_cache` がある（＝このセッションで API 応答を受け取り済み） |
+| `--%` | セッション開始直後など、使用率が分からない | 上記以外で使用率が得られない |
+
+- 200K トークンを超えた会話を約 1 時間放置すると、Claude Code は [idle compaction](https://code.claude.com/docs/en/settings-reference#idlecompaction) で会話を要約します。席を外して戻ったときに `↺ compacted` が出ているのはこのためです
+- 使用率が分からない間は、`CCSL_CTX_WARN_PCT` / `CCSL_CTX_WARN_K` の警告も出しません（compaction 前のトークン数が残っていても誤って警告しないため）
+- `used_percentage` だけが欠けていて `current_usage` がある場合は、公式と同じ計算式（`input_tokens + cache_creation_input_tokens + cache_read_input_tokens`）で `context_window_size` に対する割合を求めます
+
 ## トラブルシューティング
 
 | 症状 | 対処 |
@@ -164,6 +181,8 @@ echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_w
 | ステータスラインが表示されない | `chmod +x ~/.claude/statusline.sh` を確認。`settings.json` の `statusLine` 設定を確認 |
 | 「statusline skipped」と表示される | ワークスペース信頼ダイアログを承認する |
 | レートリミットが表示されない | API キーユーザーには表示されません（Max/Pro プランのみ） |
+| しばらく放置すると `↺ compacted` になる | idle compaction で会話が要約された直後の表示です。次の応答で実際の使用率に戻ります（[コンテキスト使用率が分からないとき](#コンテキスト使用率が分からないとき)） |
+| 放置後に 5h が消えて 7d だけになる | 5時間枠がリセットされ、Claude Code が JSON からその枠を外したためです。次の応答で再び表示されます |
 | PR 番号が表示されない | `gh auth login` でログイン済みか確認。対象ブランチに PR がない場合も非表示 |
 | リセット時刻がずれて見える | ローカルタイムゾーンで表示されます。`date` の出力（`date '+%H:%M'`）と合っているか確認 |
 
