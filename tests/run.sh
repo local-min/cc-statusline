@@ -191,7 +191,7 @@ checknot "Ultra (no five_hour): no 5h segment" "5h" "$ultra"
 # A Claude apps gateway sends spend_limit, possibly on its own and over 100%.
 spend=$(echo '{"cwd":"/tmp","rate_limits":{"spend_limit":{"used_percentage":62.8,"resets_at":1796000000,"used_usd":314.12,"limit_usd":500,"period":"monthly"}}}' | sl)
 check "spend_limit alone shows the line" "💰 spend 62%" "$spend"
-check "spend_limit dollars" '$314.12/$500' "$spend"
+check "spend_limit dollars" "\$314.12/\$500" "$spend"
 check "spend_limit percentage before the dollars arrive" "💰 spend 62% (🔄" \
   "$(echo '{"cwd":"/tmp","rate_limits":{"spend_limit":{"used_percentage":62.8,"resets_at":1796000000}}}' | sl)"
 check "spend_limit over 100%" "spend 104%" \
