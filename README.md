@@ -5,24 +5,41 @@ Claude Code の画面下部にリッチなステータス情報を常時表示�
 ## 表示内容
 
 ```
-📁 ~/git/github.com/org/my-repo              ← カレントディレクトリ
-🐙 my-repo │ 🌿 feat/login +3 ~2             ← リポジトリ名 │ ブランチ │ 差分
-🧠 ████████░░░░░░░░░░░░ 40%  │ 💪 Opus 4.6   ← コンテキスト使用率 │ モデル
-💰 5h 12% (🔄 16:00) │ 7d 36% (🔄 4/12 01:00)  ← レートリミット (Max/Pro)
-PR #324 ✓                                      ← 関連PR番号（レビュー状態バッジ付き）
+📁 ~/git/github.com/org/my-repo                  ← カレントディレクトリ
+🐙 org/my-repo │ 🌿 feat/login +3 ~2             ← リポジトリ（owner/name）│ ブランチ │ 差分
+🧠 ████████░░░░░░░░░░░░ 40% │ 💪 Opus 5.5 · xhigh ← コンテキスト使用率 │ モデル · effort
+💰 5h 12% (🔄 16:00) │ 7d 36% (🔄 4/12 01:00)      ← レートリミット（Pro / Max）
+PR #324 ✓                                          ← 関連 PR 番号（クリックで開ける・レビュー状態バッジ付き）
 ```
+
+Ultra プランには 5 時間制限がないため、4 行目は `💰 7d 8% (🔄 11/15 03:00)` のように 7 日枠だけになります（[プランごとのレートリミット表示](#プランごとのレートリミット表示)）。
 
 ### 各行の詳細
 
 | 行 | 内容 | 備考 |
 |---|---|---|
 | 1 | カレントディレクトリ | `$HOME` は `~` に短縮 |
-| 2 | リポジトリ名 / ブランチ名 / 差分 | `+N` = staged, `~N` = unstaged + untracked。git リポジトリ外では非表示。`CCSL_SHOW_LINES=1` でセッションの追加/削除行数（`📊 +N -N`）も表示 |
-| 3 | コンテキスト使用率 + モデル名 | プログレスバー付き。使用率がしきい値（デフォルト 70%）に達すると `⚠ 70%+` を赤字表示（`CCSL_CTX_WARN_PCT` で変更・無効化可）。使用率は Claude Code が実際のコンテキストウィンドウ（200k / 1M）に対して計算した値なので、モデルが変わっても同じ意味になります。使用率がまだ分からないときは `0%` ではなく、compaction 直後なら `↺ compacted`、セッション開始直後などは `--%` と表示します（詳しくは[コンテキスト使用率が分からないとき](#コンテキスト使用率が分からないとき)） |
-| 4 | レートリミット（5時間 / 7日） | Claude Max / Pro プランのみ表示。リセット時刻付き。5時間枠と7日枠は個別に表示し、片方がリセットされて JSON から消えても、もう片方は残ります |
-| 5 | PR 番号 | Claude Code が渡す `pr.number` を優先利用（**通信なし**）。無い場合のみ `gh` CLI で取得し 5 分間キャッシュ（キャッシュは `${TMPDIR:-/tmp}/claude-statusline-<uid>` に本人専用〔mode 700〕で置き、他人が作ったディレクトリやシンボリックリンクは使わない。数字以外の値は表示しない）。レビュー状態を `✓`（approved）/ `✗`（changes_requested）/ `…`（pending）/ `draft` のバッジで表示。PR がなければ非表示 |
+| 2 | リポジトリ / ブランチ名 / 差分 | リポジトリは Claude Code が渡す `workspace.repo` から `owner/name` で表示（`origin` リモートがない場合や `CCSL_REPO_OWNER=0` のときはディレクトリ名）。`+N` = staged, `~N` = unstaged + untracked。git リポジトリ外では非表示。`CCSL_SHOW_LINES=1` でセッションの追加/削除行数（`📊 +N -N`）も表示 |
+| 3 | コンテキスト使用率 + モデル名 + effort | プログレスバー付き。使用率がしきい値（デフォルト 70%）に達すると `⚠ 70%+` を赤字表示（`CCSL_CTX_WARN_PCT` で変更・無効化可）。使用率は Claude Code が実際のコンテキストウィンドウ（200k / 1M）に対して計算した値なので、モデルが変わっても同じ意味になります。使用率がまだ分からないときは `0%` ではなく、compaction 直後なら `↺ compacted`、セッション開始直後などは `--%` と表示します（詳しくは[コンテキスト使用率が分からないとき](#コンテキスト使用率が分からないとき)）。モデル名の後ろに推論の effort（`low` / `medium` / `high` / `xhigh` / `max`）を、fast mode 中は `⚡` を表示（effort に対応しないモデルでは effort は出ません。`CCSL_SHOW_EFFORT=0` で非表示） |
+| 4 | レートリミット | Pro / Max / Ultra のサブスクリプション、または Claude apps gateway の利用上限（spend limit）があるときに表示。リセット時刻付き。各枠は個別に表示し、どれかが JSON に無くても残りは表示します（[プランごとのレートリミット表示](#プランごとのレートリミット表示)） |
+| 5 | PR / MR 番号 | Claude Code が渡す `pr.number` を優先利用（**通信なし**）。GitLab のマージリクエスト（`pr.kind` が `mr`）は `MR !N` と表示。`pr.url` があれば番号をリンクにし、対応ターミナル（iTerm2 / Kitty / WezTerm など）では Cmd+クリック（macOS）/ Ctrl+クリックで開けます（`CCSL_LINKS=0` で無効化）。`pr.number` が無い場合のみ `gh` CLI で取得し 5 分間キャッシュ（キャッシュは `${TMPDIR:-/tmp}/claude-statusline-<uid>` に本人専用〔mode 700〕で置き、他人が作ったディレクトリやシンボリックリンクは使わない。数字以外の値は表示しない）。レビュー状態を `✓`（approved）/ `✗`（changes_requested）/ `…`（pending）/ `draft` のバッジで表示。PR がなければ非表示 |
 
-> **git の参照ディレクトリ**: 2 行目・5 行目の git / PR 情報は、JSON で渡される `cwd`（Claude Code が表示しているディレクトリ）を基準に取得します（`git -C "$cwd"`）。スクリプト自身のカレントディレクトリには依存しません。
+> **git の参照ディレクトリ**: 2 行目・5 行目の git / PR 情報は、JSON で渡される `workspace.current_dir`（無ければ `cwd`。どちらも Claude Code が表示しているディレクトリ）を基準に取得します（`git -C "$dir"`）。スクリプト自身のカレントディレクトリには依存しません。
+
+### プランごとのレートリミット表示
+
+4 行目は、Claude Code が JSON で渡した枠だけを表示します。プランを判定して出し分けるのではなく、JSON にある枠がそのまま出ます。
+
+| 状況 | 表示例 | 理由 |
+|---|---|---|
+| Pro / Max | `💰 5h 12% (🔄 16:00) │ 7d 36% (🔄 4/12 01:00)` | 5 時間枠と 7 日枠の両方が渡される |
+| Ultra | `💰 7d 8% (🔄 11/15 03:00)` | Ultra には 5 時間制限がなく、`five_hour` が渡されない（認証前の新しい Ultra アカウントには一時的に 5 時間制限があり、その間は 5h も表示されます） |
+| Pro / Max で放置後 | `💰 7d 36% (🔄 4/12 01:00)` | 5 時間枠が `resets_at` を過ぎると、Claude Code はその枠を JSON から外す。次の応答で再び表示されます |
+| Claude apps gateway | `💰 spend 63% $314.12/$500 (🔄 12/1 09:00)` | `rate_limits.spend_limit`。金額は gateway から届いた後に表示し、それまでは `spend 63%` だけ。上限を超えると 100% を超えて表示されます |
+| API キー | （非表示） | `rate_limits` が渡されない |
+
+- **Fable の週制限**: Max / Ultra には全モデル共通の週制限とは別に Fable 用の週制限がありますが、Claude Code（v2.1.322 時点）はこれをステータスラインの JSON に含めていません。残量は `/usage` で確認してください。将来 Claude Code が `rate_limits` に枠を追加した場合は、このスクリプトはそれも自動で表示します（Fable 枠なら `Fable 51% (🔄 11/15 03:00)` のように表示）
+- `rate_limits` はセッションで最初の API 応答を受け取るまでは渡されないため、起動直後は 4 行目が出ません
 
 ### 色分けルール
 
@@ -100,10 +117,10 @@ chmod +x ~/.claude/statusline.sh
 Claude Code を再起動する前に、モック JSON でスクリプト単体の動作を確認できます。
 
 ```bash
-echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_window":{"used_percentage":42},"rate_limits":{"five_hour":{"used_percentage":15,"resets_at":1743850800},"seven_day":{"used_percentage":30,"resets_at":1744412400}}}' | ~/.claude/statusline.sh
+echo '{"workspace":{"current_dir":"/Users/you/project"},"model":{"display_name":"Opus 5.5"},"effort":{"level":"xhigh"},"context_window":{"used_percentage":42},"rate_limits":{"five_hour":{"used_percentage":15,"resets_at":1743850800},"seven_day":{"used_percentage":30,"resets_at":1744412400}}}' | ~/.claude/statusline.sh
 ```
 
-4 行目に `💰 5h 15% (🔄 20:00) │ 7d 30% (🔄 4/12 08:00)` のような表示が出れば成功です（時刻はローカルタイムゾーンに依存）。
+3 行目に `💪 Opus 5.5 · xhigh`、4 行目に `💰 5h 15% (🔄 20:00) │ 7d 30% (🔄 4/12 08:00)` のような表示が出れば成功です（時刻はローカルタイムゾーンに依存）。
 
 ### 6. Claude Code を再起動
 
@@ -129,10 +146,13 @@ echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_w
 |---|---|---|
 | `CCSL_BAR_WIDTH` | コンテキストバーの幅（文字数）。`1`〜`200` にクランプ。非数値はデフォルトに戻ります | `20` |
 | `CCSL_PR_TTL` | PR 番号キャッシュの有効期間（秒）。`gh` フォールバック時のみ有効（`pr.number` 利用時は通信が発生しません） | `300` |
-| `CCSL_TIME_FMT_5H` | 5時間リセット時刻の `strftime` 書式 | `%H:%M` |
-| `CCSL_TIME_FMT_7D` | 7日リセット時刻の `strftime` 書式 | `%-m/%-d %H:%M` |
+| `CCSL_TIME_FMT_5H` | 5時間枠（と日次の spend limit）のリセット時刻の `strftime` 書式 | `%H:%M` |
+| `CCSL_TIME_FMT_7D` | 7日枠など週単位・月単位の枠のリセット時刻の `strftime` 書式 | `%-m/%-d %H:%M` |
 | `CCSL_SHOW_DIR` / `_GIT` / `_CONTEXT` / `_RATE` / `_PR` | 各行の表示切替（`1`=表示 / `0`=非表示） | `1` |
 | `CCSL_SHOW_LINES` | 2 行目にセッションの追加/削除行数（`📊 +N -N`）を表示 | `0` |
+| `CCSL_SHOW_EFFORT` | 3 行目のモデル名の後ろに effort と fast mode（`⚡`）を表示 | `1` |
+| `CCSL_REPO_OWNER` | 2 行目のリポジトリを `owner/name` で表示（`0` でディレクトリ名） | `1` |
+| `CCSL_LINKS` | 5 行目の PR / MR 番号をクリックできるリンクにする（OSC 8） | `1` |
 | `CCSL_CTX_WARN_PCT` | コンテキスト警告のしきい値（%）。`context_window.used_percentage` がこの値以上になると `⚠ N%+` を赤字表示。`0` で無効化。非数値はデフォルトに戻ります | `70` |
 | `CCSL_CTX_WARN_K` | 絶対値によるコンテキスト警告のしきい値（千トークン単位）。`total_input_tokens` が超過すると `⚠ Nk+` を赤字表示。`0` で無効化。`CCSL_CTX_WARN_PCT` と両方が該当するときは使用率の警告を表示します | `0`（無効） |
 | `CCSL_NO_COLOR` | ANSI カラーを無効化（標準の `NO_COLOR` も尊重します） | （未設定） |
@@ -143,9 +163,10 @@ echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_w
 
 ## 仕組み
 
-- Claude Code は `statusline.sh` を実行し、セッション情報を JSON で stdin に渡します。実行されるのはセッション開始時と、主に次のタイミングです（[公式ドキュメント](https://code.claude.com/docs/en/statusline)）
+- Claude Code は `statusline.sh` を実行し、セッション情報を JSON で stdin に渡します。実行されるのはセッション開始時（再開時を含む）と、主に次のタイミングです（[公式ドキュメント](https://code.claude.com/docs/en/statusline)）
   - アシスタントの応答が届いたとき
   - `/compact` や自動 compaction（アイドル時の idle compaction を含む）が終わったとき
+  - パーミッションモードや vim モードを切り替えたとき、`statusLine` の `command` を変えたとき
   - レートリミット枠が `resets_at` に達したとき、プロンプトキャッシュが `expires_at` に達したとき
   - `refreshInterval` を設定している場合はその間隔ごと
 - スクリプトの stdout がステータスラインとして画面下部に表示されます
@@ -156,8 +177,8 @@ echo '{"cwd":"/Users/you/project","model":{"display_name":"Opus 4.6"},"context_w
 
 - **jq 呼び出しは 1 回**：全フィールドをまとめて抽出してから組み立てます（毎メッセージ実行されるため）
 - **PR 番号は通信レス優先**：JSON の `pr.number` があれば `gh` を呼ばず、ネットワーク待ちが発生しません
-- **ANSI インジェクション対策**：`cwd` / モデル名などの値は制御文字を除去してから表示し、色は固定の ESC シーケンスのみを使います
-- **不正な JSON は明示**：パースに失敗した場合は黙って空表示にせず、`(statusline) invalid JSON on stdin` と短く表示します
+- **ANSI インジェクション対策**：`cwd` / モデル名などの値は制御文字を除去してから表示し、色は固定の ESC シーケンスのみを使います。PR リンクにする `pr.url` は、記号の限られた素の `http(s)://` URL のときだけ使います
+- **不正な JSON は明示**：パースに失敗した場合は黙って空表示にせず、`(statusline) invalid JSON on stdin` と短く表示します。JSON としては正しくても一部の値の型がおかしい場合（`"rate_limits":"x"` など）は、その項目だけを空として扱い、他の行は表示します
 - **クロスプラットフォーム**：`date` / `stat` / `md5` の差異を `uname` で吸収（macOS / Linux 両対応）。`resets_at` は epoch 秒前提ですが、念のため ISO8601 もベストエフォートで解釈します
 
 ### コンテキスト使用率が分からないとき
@@ -205,9 +226,11 @@ idle compaction は Claude Code 本体の機能で、このスクリプトの設
 | `jq: command not found` / 表示が崩れる | `brew install jq` で jq をインストール |
 | ステータスラインが表示されない | `chmod +x ~/.claude/statusline.sh` を確認。`settings.json` の `statusLine` 設定を確認 |
 | 「statusline skipped」と表示される | ワークスペース信頼ダイアログを承認する |
-| レートリミットが表示されない | API キーユーザーには表示されません（Max/Pro プランのみ） |
+| レートリミットが表示されない | API キーユーザーには表示されません（Pro / Max / Ultra のサブスクリプションか、spend limit のある Claude apps gateway のみ）。セッションで最初の応答が届くまでも表示されません |
+| 5h が出ず 7d だけになる | Ultra プランなら仕様どおりです（5 時間制限がありません）。Pro / Max で放置後にこうなった場合は、5時間枠がリセットされ、Claude Code が JSON からその枠を外したためです。次の応答で再び表示されます |
+| Fable の週制限が表示されない | Claude Code（v2.1.322 時点）がステータスラインの JSON に含めていないためです。`/usage` で確認してください |
 | しばらく放置すると `↺ compacted` になる | idle compaction で会話が要約された直後の表示です。次の応答で実際の使用率に戻ります（[コンテキスト使用率が分からないとき](#コンテキスト使用率が分からないとき)） |
-| 放置後に 5h が消えて 7d だけになる | 5時間枠がリセットされ、Claude Code が JSON からその枠を外したためです。次の応答で再び表示されます |
+| PR 番号がリンクにならない / 変な文字が出る | ターミナルが OSC 8 ハイパーリンクに対応していない可能性があります。`CCSL_LINKS=0` で普通の文字表示にできます |
 | PR 番号が表示されない | `gh auth login` でログイン済みか確認。対象ブランチに PR がない場合も非表示 |
 | リセット時刻がずれて見える | ローカルタイムゾーンで表示されます。`date` の出力（`date '+%H:%M'`）と合っているか確認 |
 

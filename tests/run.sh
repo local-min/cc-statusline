@@ -49,6 +49,31 @@ check "pr.number taken from JSON (no git, no gh)" "PR #324" \
 check "review_state badge (draft)" "draft" \
   "$(echo '{"cwd":"/tmp","pr":{"number":7,"review_state":"draft"}}' | sl)"
 
+check "GitLab merge request shown as MR !N" "MR !12" \
+  "$(echo '{"cwd":"/tmp","pr":{"number":12,"kind":"mr","review_state":"pending"}}' | sl)"
+
+# pr.url → OSC 8 hyperlink around the label, only for a plain http(s) URL.
+ESC=$(printf '\033')
+pr_link=$(echo '{"cwd":"/tmp","pr":{"number":5,"url":"https://github.com/o/r/pull/5"}}' | CCSL_SHOW_DIR=0 CCSL_NO_COLOR=1 bash "$SL")
+check "pr.url becomes an OSC 8 link" "${ESC}]8;;https://github.com/o/r/pull/5${ESC}\\PR #5${ESC}]8;;${ESC}\\" "$pr_link"
+checknot "CCSL_LINKS=0 prints the plain label" "${ESC}]8" \
+  "$(echo '{"cwd":"/tmp","pr":{"number":5,"url":"https://github.com/o/r/pull/5"}}' | CCSL_LINKS=0 CCSL_SHOW_DIR=0 CCSL_NO_COLOR=1 bash "$SL")"
+bad_url=$(echo '{"cwd":"/tmp","pr":{"number":5,"url":"javascript:alert(1)"}}' | CCSL_SHOW_DIR=0 CCSL_NO_COLOR=1 bash "$SL")
+check    "a non-http pr.url still shows the PR" "PR #5" "$bad_url"
+checknot "a non-http pr.url is not linked" "${ESC}]8" "$bad_url"
+checknot "a pr.url with spaces is not linked" "${ESC}]8" \
+  "$(echo '{"cwd":"/tmp","pr":{"number":5,"url":"https://x.example/a b"}}' | CCSL_SHOW_DIR=0 CCSL_NO_COLOR=1 bash "$SL")"
+
+# effort / fast mode next to the model
+check "effort level after the model" "💪 Opus 5.5 · xhigh" \
+  "$(echo '{"cwd":"/tmp","model":{"display_name":"Opus 5.5"},"effort":{"level":"xhigh"}}' | sl)"
+check "fast mode marker" "Opus 5.5 · high ⚡" \
+  "$(echo '{"cwd":"/tmp","model":{"display_name":"Opus 5.5"},"effort":{"level":"high"},"fast_mode":true}' | sl)"
+checknot "no effort field → no separator" "·" \
+  "$(echo '{"cwd":"/tmp","model":{"display_name":"Haiku"},"fast_mode":false}' | sl)"
+checknot "CCSL_SHOW_EFFORT=0 hides effort and fast mode" "xhigh" \
+  "$(echo '{"cwd":"/tmp","model":{"display_name":"Opus"},"effort":{"level":"xhigh"},"fast_mode":true}' | CCSL_SHOW_EFFORT=0 CCSL_NO_COLOR=1 bash "$SL")"
+
 # ANSI injection: real ESC byte, encoded as valid JSON by jq → must be stripped.
 inj_raw=$(printf '/tmp/Xpre\033[31mEVIL')
 inj_json=$(jq -nc --arg c "$inj_raw" '{cwd:$c, context_window:{used_percentage:5}}')
@@ -67,6 +92,18 @@ checknot "no git line outside a repo" "🐙" \
 # trips bash 3.2 quote parsing and brace-expands the JSON.
 j_repo=$(printf '{"cwd":"%s","context_window":{"used_percentage":5}}' "$REPO")
 check "git line reads JSON cwd" "$(basename "$REPO")" "$(printf '%s' "$j_repo" | sl)"
+
+# workspace.current_dir is the documented field; cwd holds the same value.
+j_ws=$(printf '{"cwd":"/nonexistent","workspace":{"current_dir":"%s"}}' "$REPO")
+check "workspace.current_dir preferred over cwd" "🐙 $(basename "$REPO")" "$(printf '%s' "$j_ws" | sl)"
+
+j_owner=$(printf '{"cwd":"%s","workspace":{"repo":{"host":"github.com","owner":"acme","name":"widgets"}}}' "$REPO")
+check "workspace.repo shown as owner/name" "🐙 acme/widgets │" "$(printf '%s' "$j_owner" | sl)"
+check "CCSL_REPO_OWNER=0 keeps the directory name" "🐙 $(basename "$REPO") │" \
+  "$(printf '%s' "$j_owner" | CCSL_REPO_OWNER=0 CCSL_NO_COLOR=1 bash "$SL")"
+j_nonowner=$(printf '{"cwd":"%s","workspace":{"repo":{"host":"github.com","name":"widgets"}}}' "$REPO")
+check "workspace.repo without owner falls back to the directory name" "🐙 $(basename "$REPO") │" \
+  "$(printf '%s' "$j_nonowner" | sl)"
 
 # $HOME → ~ must use an exact match (no ~2 mangling of /home/me2).
 # Disable git/PR lines so the assertion only inspects the dir line — otherwise
@@ -145,6 +182,40 @@ checknot "no 5h segment when the 5h window is absent" "5h" "$only7"
 both_rl=$(echo '{"cwd":"/tmp","rate_limits":{"five_hour":{"used_percentage":12},"seven_day":{"used_percentage":36}}}' | sl)
 check "both windows joined on one line" "💰 5h 12% │ 7d 36%" "$both_rl"
 
+# Ultra has no 5-hour limit: its JSON carries seven_day alone (captured from
+# Claude Code v2.1.322 on an Ultra plan).
+ultra=$(echo '{"cwd":"/tmp","rate_limits":{"seven_day":{"used_percentage":8,"resets_at":1794679200}}}' | sl)
+check    "Ultra (no five_hour): 7d alone" "💰 7d 8%" "$ultra"
+checknot "Ultra (no five_hour): no 5h segment" "5h" "$ultra"
+
+# A Claude apps gateway sends spend_limit, possibly on its own and over 100%.
+spend=$(echo '{"cwd":"/tmp","rate_limits":{"spend_limit":{"used_percentage":62.8,"resets_at":1796000000,"used_usd":314.12,"limit_usd":500,"period":"monthly"}}}' | sl)
+check "spend_limit alone shows the line" "💰 spend 62%" "$spend"
+check "spend_limit dollars" '$314.12/$500' "$spend"
+check "spend_limit percentage before the dollars arrive" "💰 spend 62% (🔄" \
+  "$(echo '{"cwd":"/tmp","rate_limits":{"spend_limit":{"used_percentage":62.8,"resets_at":1796000000}}}' | sl)"
+check "spend_limit over 100%" "spend 104%" \
+  "$(echo '{"cwd":"/tmp","rate_limits":{"spend_limit":{"used_percentage":104.2}}}' | sl)"
+checknot "non-numeric spend dollars are dropped" '$' \
+  "$(echo '{"cwd":"/tmp","rate_limits":{"spend_limit":{"used_percentage":5,"used_usd":"1;x","limit_usd":500}}}' | CCSL_SHOW_DIR=0 CCSL_NO_COLOR=1 bash "$SL")"
+check "spend_limit joins the other windows" "7d 36% │ spend 5%" \
+  "$(echo '{"cwd":"/tmp","rate_limits":{"seven_day":{"used_percentage":36},"spend_limit":{"used_percentage":5}}}' | sl)"
+
+# Windows the status-line JSON may gain later (e.g. a separate Fable limit).
+extra=$(echo '{"cwd":"/tmp","rate_limits":{"seven_day":{"used_percentage":36},"seven_day_overage_included":{"used_percentage":51.5,"resets_at":1794679200},"seven_day_new_thing":{"used_percentage":3},"odd":"x","bad":{"used_percentage":"9"}}}' | sl)
+check    "overage-included weekly window is labelled Fable" "Fable 51% (🔄" "$extra"
+check    "an unknown window gets a readable label" "New thing 3%" "$extra"
+checknot "a non-object window is ignored" "Odd" "$extra"
+checknot "a window without a numeric percentage is ignored" "Bad" "$extra"
+inj_key=$(jq -nc '{cwd:"/tmp", rate_limits:{("seven_day_x\u001b[31m"):{used_percentage:4}}}')
+checknot "no ESC from a window name reaches the output" "$(printf '\033')" "$(printf '%s' "$inj_key" | sl)"
+# jq streams its outputs, so a failure part-way would blank every field after
+# it — pr.number comes after rate_limits in the extraction.
+check "a non-object rate_limits does not blank the later fields" "PR #9" \
+  "$(echo '{"cwd":"/tmp","rate_limits":"weird","pr":{"number":9}}' | sl)"
+check "a non-object rate_limits window does not blank the later fields" "PR #9" \
+  "$(echo '{"cwd":"/tmp","rate_limits":{"five_hour":3},"pr":{"number":9}}' | sl)"
+
 check "ISO8601 reset renders a time" "🔄" \
   "$(echo '{"cwd":"/tmp","rate_limits":{"five_hour":{"used_percentage":15,"resets_at":"2026-06-26T16:00:00Z"}}}' | sl)"
 
@@ -196,6 +267,12 @@ if [ -z "$(ls -A "$CACHE_TMP/elsewhere")" ]; then
 else
   printf 'FAIL  wrote through a symlinked cache directory: %s\n' "$(ls -A "$CACHE_TMP/elsewhere")"; fail=$((fail + 1))
 fi
+j_urlonly=$(printf '{"cwd":"%s","pr":{"url":"https://gitlab.com/g/p/-/merge_requests/3","kind":"mr"}}' "$REPO")
+out=$(printf '%s' "$j_urlonly" | PATH="$FAKEBIN:$PATH" TMPDIR="$CACHE_TMP" CCSL_NO_COLOR=1 bash "$SL")
+check    "gh fallback still runs when pr has no number" "PR #42" "$out"
+checknot "a numberless pr.url is not put on gh's PR" "$(printf '\033')]8" "$out"
+checknot "rate line absent when no window is usable" "💰" \
+  "$(echo '{"cwd":"/tmp","rate_limits":{"five_hour":{},"seven_day":{"used_percentage":null},"x":{"used_percentage":-1}}}' | sl)"
 checknot "a non-numeric pr.number is not printed" "PR #" \
   "$(echo '{"cwd":"/tmp","pr":{"number":"7; rm"}}' | sl)"
 
