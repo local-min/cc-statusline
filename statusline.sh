@@ -5,10 +5,13 @@
 # Customization via environment variables (all optional):
 #   CCSL_BAR_WIDTH    context bar width in chars           (default 20, clamped 1–200)
 #   CCSL_PR_TTL       PR number cache TTL in seconds        (default 300)
-#   CCSL_TIME_FMT_5H  strftime for 5h reset time            (default '%H:%M')
-#   CCSL_TIME_FMT_7D  strftime for 7d reset time            (default '%-m/%-d %H:%M')
+#   CCSL_TIME_FMT_5H  strftime for 5h (and daily) resets    (default '%H:%M')
+#   CCSL_TIME_FMT_7D  strftime for weekly/monthly resets    (default '%-m/%-d %H:%M')
 #   CCSL_SHOW_DIR / _GIT / _CONTEXT / _RATE / _PR   toggle each line (1/0, default 1)
 #   CCSL_SHOW_LINES   show session +added/-removed lines    (1/0, default 0)
+#   CCSL_SHOW_EFFORT  show effort level / fast mode         (1/0, default 1)
+#   CCSL_REPO_OWNER   show the repo as owner/name           (1/0, default 1)
+#   CCSL_LINKS        make the PR/MR number a clickable link (1/0, default 1)
 #   CCSL_CTX_WARN_PCT context-usage warning threshold (%)   (default 70, 0=off)
 #   CCSL_CTX_WARN_K   context-token warning threshold (k)   (default 0=off)
 #   CCSL_NO_COLOR=1   disable ANSI colors (the standard NO_COLOR is also honored)
@@ -91,14 +94,37 @@ color_for() { # $1=int → green <50, yellow <80, red >=80 (non-numeric → gree
   else printf '%s' "$RED"; fi
 }
 
+usd() { # $1=non-negative number → "$500" / "$314.12" ("" if not a plain number)
+  case "$1" in
+    ''|*[!0-9.]*|*.*.*|.*|*.) return ;;
+    *.*) LC_ALL=C printf '$%.2f' "$1" ;;
+    *)   printf '$%s' "$1" ;;
+  esac
+}
+
+# One rate-limit segment: "<label> <pct>%<extra> (🔄 <time>)".
+rate_seg() { # $1=label  $2=pct  $3=resets_at  $4=strftime fmt  [$5=extra text after the %]
+  local c t when=""
+  c=$(color_for "$2")
+  if [ -n "$3" ]; then
+    t=$(reset_to_time "$3" "$4")
+    [ -n "$t" ] && when=" (🔄 ${t})"
+  fi
+  printf '%s' "$1 ${c}$2%${RST}${5:-}${when}"
+}
+
 # ─── Single jq pass: extract every field at once (one value per line) ───
 # `clean` strips control chars from every string so untrusted values (cwd,
 # model, branch via the repo dir, reset stamps) can neither inject ANSI nor
 # break the line-by-line read below. [[:cntrl:]] is a POSIX class Oniguruma
-# (jq's regex engine) understands directly.
+# (jq's regex engine) understands directly. `o` turns anything that is not an
+# object into {} so one odd value (say "rate_limits":"x") cannot make jq fail
+# and blank every other line.
 {
   IFS= read -r CWD_RAW
   IFS= read -r MODEL
+  IFS= read -r EFFORT
+  IFS= read -r FAST
   IFS= read -r PCT
   IFS= read -r CTX_STATE
   IFS= read -r CTX_TOKENS
@@ -106,20 +132,55 @@ color_for() { # $1=int → green <50, yellow <80, red >=80 (non-numeric → gree
   IFS= read -r FIVE_RESET
   IFS= read -r SEVEN_PCT
   IFS= read -r SEVEN_RESET
+  IFS= read -r SPEND_PCT
+  IFS= read -r SPEND_RESET
+  IFS= read -r SPEND_USED
+  IFS= read -r SPEND_LIMIT
+  IFS= read -r SPEND_PERIOD
   IFS= read -r PR_NUM
   IFS= read -r PR_STATE
+  IFS= read -r PR_KIND
+  IFS= read -r PR_URL
+  IFS= read -r REPO_FULL
   IFS= read -r LINES_ADD
   IFS= read -r LINES_DEL
+  # Any further rows are extra rate-limit windows: label<TAB>pct<TAB>5h|7d<TAB>resets_at.
+  # resets_at goes last because it may be empty, and read collapses a run of
+  # tabs (whitespace IFS) — an empty field anywhere else would shift the rest.
+  EX_LABEL=(); EX_PCT=(); EX_KIND=(); EX_RESET=()
+  while IFS=$'\t' read -r ex_l ex_p ex_k ex_r; do
+    EX_LABEL+=("$ex_l"); EX_PCT+=("$ex_p"); EX_KIND+=("$ex_k"); EX_RESET+=("$ex_r")
+  done
 } < <(printf '%s' "$JSON" | jq -r '
   def clean: if type == "string" then gsub("[[:cntrl:]]"; "") else (. | tostring) end;
-  ( .cwd // .workspace.current_dir // ""                         | clean ),
-  ( .model.display_name // ""                                    | clean ),
+  def o: if type == "object" then . else {} end;
+  def pct: (tonumber? | floor) // "";
+  # A short display name for a rate-limit window key. The status-line JSON has
+  # only five_hour / seven_day / spend_limit today; this names any other window
+  # Claude Code may add later (Claude Code calls seven_day_overage_included the
+  # "Fable limit").
+  def window_label:
+    { "seven_day_overage_included": "Fable", "seven_day_opus": "Opus",
+      "seven_day_sonnet": "Sonnet" }[.]
+    // ( (if startswith("five_hour_") then "5h " else "" end)
+         + (sub("^(seven_day|five_hour)_"; "") | gsub("[^A-Za-z0-9]+"; " ")
+            | sub("^ +"; "") | sub(" +$"; ""))
+       | if . == "" then "limit" else (.[0:1] | ascii_upcase) + .[1:] end );
+  o
+  | (.rate_limits | o) as $rl
+  | (.workspace   | o) as $ws
+  | (.pr          | o) as $pr
+  | (.context_window | o) as $cw
+  | ( $ws.current_dir // .cwd // ""                              | clean ),
+  ( (.model | o).display_name // ""                              | clean ),
+  ( (.effort | o).level // ""                                    | clean ),
+  ( if .fast_mode == true then "1" else "" end ),
   # Context usage, or "" when it is not known. current_usage is null before the
   # first API call and again after a compaction (manual, auto or idle) until the
   # next call, so any used_percentage alongside it is not a live figure. When
   # used_percentage alone is missing, rebuild it the documented way: input
   # tokens only, against context_window_size.
-  ( .context_window | if type == "object" then . else {} end
+  ( $cw
     | if has("current_usage") and .current_usage == null then ""
       elif (.used_percentage | type) == "number" then .used_percentage | floor
       elif (.current_usage | type) == "object" and (.context_window_size | type) == "number"
@@ -129,18 +190,45 @@ color_for() { # $1=int → green <50, yellow <80, red >=80 (non-numeric → gree
       else "" end ),
   # "compacted" when that null comes after the session has had an API response
   # (prompt_cache only appears from then on), i.e. a compaction just finished.
-  ( if (.context_window | type) == "object" and (.context_window | has("current_usage"))
-       and .context_window.current_usage == null and (.prompt_cache | type) == "object"
+  ( if ($cw | has("current_usage")) and $cw.current_usage == null
+       and (.prompt_cache | type) == "object"
     then "compacted" else "" end ),
-  ( .context_window.total_input_tokens // 0 ),
-  ( .rate_limits.five_hour.used_percentage  | (tonumber? | floor) // "" ),
-  ( .rate_limits.five_hour.resets_at  // ""                      | clean ),
-  ( .rate_limits.seven_day.used_percentage  | (tonumber? | floor) // "" ),
-  ( .rate_limits.seven_day.resets_at // ""                       | clean ),
-  ( .pr.number // ""                                             | clean ),
-  ( .pr.review_state // ""                                       | clean ),
-  ( .cost.total_lines_added   // ""                              | clean ),
-  ( .cost.total_lines_removed // ""                              | clean )
+  ( $cw.total_input_tokens // 0                                  | clean ),
+  # Each window is independently optional: a plan without a 5-hour limit
+  # (Ultra) sends seven_day alone, and Claude Code drops any window once its
+  # resets_at passes.
+  ( ($rl.five_hour   | o).used_percentage                        | pct ),
+  ( ($rl.five_hour   | o).resets_at // ""                        | clean ),
+  ( ($rl.seven_day   | o).used_percentage                        | pct ),
+  ( ($rl.seven_day   | o).resets_at // ""                        | clean ),
+  # spend_limit: behind a Claude apps gateway. used_percentage can pass 100;
+  # the dollar fields and period arrive later than the percentage, if at all.
+  ( ($rl.spend_limit | o).used_percentage                        | pct ),
+  ( ($rl.spend_limit | o).resets_at // ""                        | clean ),
+  ( ($rl.spend_limit | o).used_usd  | if type == "number" and . >= 0 then tostring else "" end ),
+  ( ($rl.spend_limit | o).limit_usd | if type == "number" and . >= 0 then tostring else "" end ),
+  ( ($rl.spend_limit | o).period // ""                           | clean ),
+  ( $pr.number // ""                                             | clean ),
+  ( $pr.review_state // ""                                       | clean ),
+  ( $pr.kind // ""                                               | clean ),
+  # Only a plain http(s) URL may go inside the OSC 8 link sequence.
+  ( $pr.url | if type == "string" and test("^https?://[A-Za-z0-9._~:/?#@!$&+,;=%-]+$")
+              then . else "" end ),
+  ( ($ws.repo | o)
+    | if (.owner | type) == "string" and (.name | type) == "string"
+         and .owner != "" and .name != ""
+      then "\(.owner)/\(.name)" else "" end                      | clean ),
+  ( (.cost | o).total_lines_added   // ""                        | clean ),
+  ( (.cost | o).total_lines_removed // ""                        | clean ),
+  ( $rl | to_entries[]
+    | select(.key != "five_hour" and .key != "seven_day" and .key != "spend_limit")
+    | select((.value | type) == "object" and (.value.used_percentage | type) == "number"
+             and .value.used_percentage >= 0)
+    | [ (.key | window_label),
+        (.value.used_percentage | floor | tostring),
+        (if (.key | startswith("five_hour")) then "5h" else "7d" end),
+        (.value.resets_at // "" | clean) ]
+    | join("\t") )
 ' 2>/dev/null)
 
 # ─── Line 1: Current directory ───
@@ -174,7 +262,14 @@ fi
 
 # ─── Line 2: Repo | Branch + diff ───
 if [ "$IN_GIT" = "1" ] && [ "${CCSL_SHOW_GIT:-1}" = "1" ]; then
-  REPO=$(strip_ctrl "$(basename "$TOPLEVEL")")
+  # owner/name from the origin remote (workspace.repo) when Claude Code sends
+  # it; otherwise — no origin, older Claude Code, or CCSL_REPO_OWNER=0 — the
+  # work tree's directory name.
+  if [ -n "$REPO_FULL" ] && [ "${CCSL_REPO_OWNER:-1}" = "1" ]; then
+    REPO=$REPO_FULL
+  else
+    REPO=$(strip_ctrl "$(basename "$TOPLEVEL")")
+  fi
 
   # Single `git status --porcelain` pass → staged / unstaged / untracked counts
   read -r STAGED UNSTAGED UNTRACKED < <("${GIT[@]}" status --porcelain 2>/dev/null | awk '
@@ -252,42 +347,52 @@ if [ "${CCSL_SHOW_CONTEXT:-1}" = "1" ]; then
     USAGE="${DIM}--%${RST}"
   fi
 
-  printf '%s\n' "🧠 ${BAR} ${USAGE}${WARN} │ 💪 ${BOLD}${MODEL}${RST}"
+  # Effort level and fast mode, next to the model they apply to. effort is
+  # absent on models without the effort parameter; fast_mode is a boolean.
+  MODEL_EXTRA=""
+  if [ "${CCSL_SHOW_EFFORT:-1}" = "1" ]; then
+    [ -n "$EFFORT" ] && MODEL_EXTRA+=" ${DIM}·${RST} ${EFFORT}"
+    [ "$FAST" = "1" ] && MODEL_EXTRA+=" ${YLW}⚡${RST}"
+  fi
+
+  printf '%s\n' "🧠 ${BAR} ${USAGE}${WARN} │ 💪 ${BOLD}${MODEL}${RST}${MODEL_EXTRA}"
 fi
 
-# ─── Line 4: Rate limits (Claude Max/Pro) ───
-# Each window is shown on its own: Claude Code drops a window from the JSON once
-# its resets_at passes (e.g. the 5h one while the session sits idle), and the
-# other window must not disappear with it.
-if [ "${CCSL_SHOW_RATE:-1}" = "1" ] && { [ -n "$FIVE_PCT" ] || [ -n "$SEVEN_PCT" ]; }; then
+# ─── Line 4: Rate limits (Pro / Max / Ultra, or a Claude apps gateway) ───
+# Every window is optional and shown on its own:
+#   - Ultra has no 5-hour limit, so its JSON carries seven_day alone.
+#   - Claude Code drops a window once its resets_at passes (e.g. the 5h one
+#     while a Pro/Max session sits idle); the others must stay.
+#   - Behind a gateway there may be only spend_limit.
+TIME_5H=${CCSL_TIME_FMT_5H:-%H:%M}
+TIME_7D=${CCSL_TIME_FMT_7D:-%-m/%-d %H:%M}
+if [ "${CCSL_SHOW_RATE:-1}" = "1" ]; then
+  SEGS=()
+  [ -n "$FIVE_PCT" ]  && SEGS+=("$(rate_seg 5h "$FIVE_PCT"  "$FIVE_RESET"  "$TIME_5H")")
+  [ -n "$SEVEN_PCT" ] && SEGS+=("$(rate_seg 7d "$SEVEN_PCT" "$SEVEN_RESET" "$TIME_7D")")
+
+  # Windows Claude Code may add later (for example a separate Fable limit).
+  for ((i=0; i<${#EX_LABEL[@]}; i++)); do
+    case "${EX_PCT[$i]}" in ''|*[!0-9]*) continue ;; esac
+    fmt=$TIME_7D; [ "${EX_KIND[$i]}" = "5h" ] && fmt=$TIME_5H
+    SEGS+=("$(rate_seg "${EX_LABEL[$i]}" "${EX_PCT[$i]}" "${EX_RESET[$i]}" "$fmt")")
+  done
+
+  if [ -n "$SPEND_PCT" ]; then
+    # "spend 63% $314.12/$500 (🔄 12/1 09:00)" — the dollars only once the
+    # gateway has sent both; a daily limit resets within the day.
+    fmt=$TIME_7D; [ "$SPEND_PERIOD" = "daily" ] && fmt=$TIME_5H
+    used=$(usd "$SPEND_USED"); limit=$(usd "$SPEND_LIMIT"); dollars=""
+    [ -n "$used" ] && [ -n "$limit" ] && dollars=" ${used}/${limit}"
+    SEGS+=("$(rate_seg spend "$SPEND_PCT" "$SPEND_RESET" "$fmt" "$dollars")")
+  fi
+
   LINE=""
-
-  if [ -n "$FIVE_PCT" ]; then
-    FC=$(color_for "$FIVE_PCT")
-
-    FIVE_TIME=""
-    if [ -n "$FIVE_RESET" ]; then
-      t=$(reset_to_time "$FIVE_RESET" "${CCSL_TIME_FMT_5H:-%H:%M}")
-      [ -n "$t" ] && FIVE_TIME=" (🔄 ${t})"
-    fi
-
-    LINE="5h ${FC}${FIVE_PCT}%${RST}${FIVE_TIME}"
-  fi
-
-  if [ -n "$SEVEN_PCT" ]; then
-    SC=$(color_for "$SEVEN_PCT")
-
-    SEVEN_TIME=""
-    if [ -n "$SEVEN_RESET" ]; then
-      t=$(reset_to_time "$SEVEN_RESET" "${CCSL_TIME_FMT_7D:-%-m/%-d %H:%M}")
-      [ -n "$t" ] && SEVEN_TIME=" (🔄 ${t})"
-    fi
-
+  for s in "${SEGS[@]}"; do
     [ -n "$LINE" ] && LINE+=" │ "
-    LINE+="7d ${SC}${SEVEN_PCT}%${RST}${SEVEN_TIME}"
-  fi
-
-  printf '%s\n' "💰 ${LINE}"
+    LINE+=$s
+  done
+  [ -n "$LINE" ] && printf '%s\n' "💰 ${LINE}"
 fi
 
 # ─── Line 5: PR number ───
@@ -297,6 +402,7 @@ if [ "${CCSL_SHOW_PR:-1}" = "1" ]; then
   # pr.number from the JSON is shown regardless of local git state; the gh
   # fallback only runs inside a git work tree.
   if [ -z "$PR_NUM" ] && [ "$IN_GIT" = "1" ] && command -v gh >/dev/null 2>&1; then
+    PR_URL=''; PR_KIND=''   # leftovers of a numberless pr object must not dress up gh's PR
     PR_TTL=${CCSL_PR_TTL:-300}
     case "$PR_TTL" in ''|*[!0-9]*) PR_TTL=300 ;; esac
     # One cache directory per user, created private. On a shared /tmp (Linux)
@@ -341,6 +447,16 @@ if [ "${CCSL_SHOW_PR:-1}" = "1" ]; then
       pending)           BADGE=" ${YLW}…${RST}" ;;
       draft)             BADGE=" ${DIM}draft${RST}" ;;
     esac
-    printf '%s\n' "${MAG}PR #${PR_NUM}${RST}${BADGE}"
+
+    # A GitLab merge request arrives in the same fields with pr.kind "mr" and
+    # is conventionally written !N. The gh fallback only ever finds GitHub PRs.
+    if [ "$PR_KIND" = "mr" ]; then LABEL="MR !${PR_NUM}"; else LABEL="PR #${PR_NUM}"; fi
+
+    # OSC 8 hyperlink to pr.url (Cmd/Ctrl+click). The URL was checked to be a
+    # plain http(s) URL in the jq pass; it is absent on the gh fallback.
+    if [ -n "$PR_URL" ] && [ "${CCSL_LINKS:-1}" = "1" ]; then
+      LABEL=$'\033]8;;'"${PR_URL}"$'\033\\'"${LABEL}"$'\033]8;;\033\\'
+    fi
+    printf '%s\n' "${MAG}${LABEL}${RST}${BADGE}"
   fi
 fi
