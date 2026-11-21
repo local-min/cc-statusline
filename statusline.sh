@@ -211,8 +211,10 @@ rate_seg() { # $1=label  $2=pct  $3=resets_at  $4=strftime fmt  [$5=extra text a
   ( $pr.number // ""                                             | clean ),
   ( $pr.review_state // ""                                       | clean ),
   ( $pr.kind // ""                                               | clean ),
-  # Only a plain http(s) URL may go inside the OSC 8 link sequence.
-  ( $pr.url | if type == "string" and test("^https?://[A-Za-z0-9._~:/?#@!$&+,;=%-]+$")
+  # Only a plain http(s) URL may go inside the OSC 8 link sequence. \A and \z
+  # anchor the whole string: "$" also matches before a final newline, and a
+  # URL ending in one would add a row and shift every field read after it.
+  ( $pr.url | if type == "string" and test("\\Ahttps?://[A-Za-z0-9._~:/?#@!$&+,;=%-]+\\z")
               then . else "" end ),
   ( ($ws.repo | o)
     | if (.owner | type) == "string" and (.name | type) == "string"
