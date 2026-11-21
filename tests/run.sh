@@ -63,6 +63,13 @@ check    "a non-http pr.url still shows the PR" "PR #5" "$bad_url"
 checknot "a non-http pr.url is not linked" "${ESC}]8" "$bad_url"
 checknot "a pr.url with spaces is not linked" "${ESC}]8" \
   "$(echo '{"cwd":"/tmp","pr":{"number":5,"url":"https://x.example/a b"}}' | CCSL_SHOW_DIR=0 CCSL_NO_COLOR=1 bash "$SL")"
+# A URL ending in a newline passes a "$"-anchored check; it must be rejected
+# whole, or its newline shifts the rows read after it (repo, lines changed).
+j_nlurl=$(printf '{"cwd":"%s","workspace":{"repo":{"owner":"acme","name":"widgets"}},"pr":{"number":5,"url":"https://x.example/pull/5\\n"},"cost":{"total_lines_added":7,"total_lines_removed":0}}' "$REPO")
+nl_out=$(printf '%s' "$j_nlurl" | CCSL_SHOW_LINES=1 sl)
+checknot "a pr.url ending in a newline is not linked" "${ESC}]8" "$nl_out"
+check    "a pr.url ending in a newline does not shift the repo" "🐙 acme/widgets │" "$nl_out"
+check    "a pr.url ending in a newline does not shift the line counts" "📊 +7 -0" "$nl_out"
 
 # effort / fast mode next to the model
 check "effort level after the model" "💪 Opus 5.5 · xhigh" \
